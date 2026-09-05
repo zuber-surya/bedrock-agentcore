@@ -155,7 +155,7 @@ Resources:
 Outputs:
   ApiEndpoint:
     Description: Chat API URL
-    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/chat"
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/prod/chat"
   CloudFrontURL:
     Description: CampusAssist UI URL
     Value: !Sub "https://${UiDistribution.DomainName}"
