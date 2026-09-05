@@ -1,0 +1,99 @@
+name: Deploy CampusAssist
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  STACK_NAME: campusassist
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Unit tests
+        run: python -m unittest discover -s lambda/tests -v
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Configure AWS credentials (OIDC)
+        if: ${{ vars.AWS_ROLE_ARN != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install SAM CLI
+        if: ${{ vars.AWS_ROLE_ARN != '' }}
+        uses: aws-actions/setup-sam@v2
+
+      - name: Deploy infra (SAM)
+        if: ${{ vars.AWS_ROLE_ARN != '' }}
+        env:
+          DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
+        run: |
+          if [ -z "$DOCS_BUCKET" ]; then
+            echo "Set repository variable DOCS_BUCKET (globally unique S3 name)"
+            exit 1
+          fi
+          sam deploy \
+            --template-file infra/template.yaml \
+            --stack-name "$STACK_NAME" \
+            --resolve-s3 \
+            --capabilities CAPABILITY_IAM \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              ProjectName=campusassist \
+              MockMode=${{ vars.MOCK_MODE || 'true' }} \
+              AgentRuntimeArn=${{ vars.AGENT_RUNTIME_ARN || '' }} \
+              DocsBucketName=$DOCS_BUCKET
+
+      - name: Sync KB docs to S3
+        if: ${{ vars.AWS_ROLE_ARN != '' }}
+        run: |
+          aws s3 sync docs/kb "s3://${{ vars.DOCS_BUCKET }}/kb/" --delete
+
+      - name: Build UI
+        working-directory: ui
+        env:
+          VITE_API_URL: ${{ vars.API_URL || '/chat' }}
+        run: |
+          npm install
+          npm run build
+
+      - name: Publish UI + invalidate CloudFront
+        if: ${{ vars.AWS_ROLE_ARN != '' }}
+        run: |
+          UI_BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='UiBucketNameOut'].OutputValue" --output text)
+          DIST_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text)
+          API=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" --output text)
+          CF=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='CloudFrontURL'].OutputValue" --output text)
+          # Rebuild UI with real API URL
+          cd ui
+          VITE_API_URL="$API" npm run build
+          aws s3 sync dist "s3://${UI_BUCKET}/" --delete
+          aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"
+          echo "API=$API" >> "$GITHUB_STEP_SUMMARY"
+          echo "UI=$CF" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Skip AWS deploy note
+        if: ${{ vars.AWS_ROLE_ARN == '' }}
+        run: |
+          echo "AWS_ROLE_ARN not set — ran tests only. Configure GitHub Actions variables to deploy." >> "$GITHUB_STEP_SUMMARY"

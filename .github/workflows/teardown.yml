@@ -1,0 +1,22 @@
+name: Teardown CampusAssist
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  teardown:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      - name: Delete stack
+        run: |
+          chmod +x scripts/teardown.sh
+          STACK_NAME=campusassist AWS_REGION=${{ vars.AWS_REGION || 'us-east-1' }} ./scripts/teardown.sh

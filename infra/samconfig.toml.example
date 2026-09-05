@@ -1,0 +1,3 @@
+# Copy docs into invoke package so Lambda can read KB in mock mode (optional).
+# SAM build context for invoke only includes lambda/invoke — builtin hits cover missing docs.
+package_type: Zip
