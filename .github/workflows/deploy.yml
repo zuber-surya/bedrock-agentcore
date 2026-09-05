@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: read
 
 env:
@@ -32,19 +31,20 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
-      - name: Configure AWS credentials (OIDC)
-        if: ${{ vars.AWS_ROLE_ARN != '' }}
+      - name: Configure AWS credentials (access keys)
+        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Install SAM CLI
-        if: ${{ vars.AWS_ROLE_ARN != '' }}
+        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
         uses: aws-actions/setup-sam@v2
 
       - name: Deploy infra (SAM)
-        if: ${{ vars.AWS_ROLE_ARN != '' }}
+        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
         env:
           DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
         run: |
@@ -66,7 +66,7 @@ jobs:
               DocsBucketName=$DOCS_BUCKET
 
       - name: Sync KB docs to S3
-        if: ${{ vars.AWS_ROLE_ARN != '' }}
+        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
         run: |
           aws s3 sync docs/kb "s3://${{ vars.DOCS_BUCKET }}/kb/" --delete
 
@@ -79,12 +79,17 @@ jobs:
           npm run build
 
       - name: Publish UI + invalidate CloudFront
-        if: ${{ vars.AWS_ROLE_ARN != '' && vars.ENABLE_CLOUDFRONT == 'true' }}
+        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
         run: |
           UI_BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='UiBucketNameOut'].OutputValue" --output text)
           DIST_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text)
           API=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" --output text)
           CF=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='CloudFrontURL'].OutputValue" --output text)
+          if [ -z "$UI_BUCKET" ] || [ "$UI_BUCKET" = "None" ]; then
+            echo "CloudFront/UI outputs missing — API only deploy"
+            echo "API=$API" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           cd ui
           VITE_API_URL="$API" npm run build
           aws s3 sync dist "s3://${UI_BUCKET}/" --delete
@@ -92,14 +97,7 @@ jobs:
           echo "API=$API" >> "$GITHUB_STEP_SUMMARY"
           echo "UI=$CF" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Print API endpoint (no CloudFront)
-        if: ${{ vars.AWS_ROLE_ARN != '' && vars.ENABLE_CLOUDFRONT != 'true' }}
-        run: |
-          API=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" --output text)
-          echo "API=$API" >> "$GITHUB_STEP_SUMMARY"
-          echo "CloudFront skipped (account may need AWS Support verification). Point local UI at API with VITE_API_URL." >> "$GITHUB_STEP_SUMMARY"
-
       - name: Skip AWS deploy note
-        if: ${{ vars.AWS_ROLE_ARN == '' }}
+        if: ${{ secrets.AWS_ACCESS_KEY_ID == '' }}
         run: |
-          echo "AWS_ROLE_ARN not set — ran tests only. Configure GitHub Actions variables to deploy." >> "$GITHUB_STEP_SUMMARY"
+          echo "AWS_ACCESS_KEY_ID secret not set — ran tests only." >> "$GITHUB_STEP_SUMMARY"

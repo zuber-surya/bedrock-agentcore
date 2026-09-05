@@ -146,16 +146,17 @@ Talk line: “Wave 1 proved hosting; Wave 2 swapped the brain to AgentCore + Man
 
 ---
 
-## Status (2026-09-05)
+## Status (rechecked 2026-09-05 evening)
 
 | Item | Status |
 |---|---|
-| Region | **us-east-1** (locked) |
+| Region | **us-east-1** |
 | GitHub | https://github.com/zuber-surya/bedrock-agentcore |
-| Wave 1 API | **Live** `https://3wfx35hyp2.execute-api.us-east-1.amazonaws.com/prod/chat` (`MOCK_MODE=true`) |
-| CloudFront UI | **Blocked** — AWS account must be verified for CloudFront (open Support case) |
-| GitHub Actions OIDC | Role created; AssumeRoleWithWebIdentity still failing — use local `sam deploy` until fixed |
+| Wave 1 API | **Live** `https://3wfx35hyp2.execute-api.us-east-1.amazonaws.com/prod/chat` |
+| CloudFront | **NOT fixed** — create distribution still returns *account must be verified* (403). Open [AWS Support](https://console.aws.amazon.com/support/home) → Account and billing / service limit for CloudFront verification. Listing distributions works; **creating** does not. |
+| GitHub Actions OIDC | **NOT fixed** — latest run still `Not authorized to perform sts:AssumeRoleWithWebIdentity` on role `campusassist-github`. Keep using local `sam deploy` until trust/OIDC is corrected. |
 | Docs bucket | `campusassist-kb-zubersurya-771495376060` |
+| Stack | `campusassist` rolled back after CF attempt; API stack still healthy |
 
 ### Use live API with local UI
 
@@ -165,6 +166,10 @@ $env:VITE_API_URL="https://3wfx35hyp2.execute-api.us-east-1.amazonaws.com/prod/c
 npm run dev
 ```
 
-### Unblock CloudFront later
+### When CloudFront is truly fixed
 
-AWS Console → Support → Account verification for CloudFront → then restore CF resources in `infra/template.yaml` and set GitHub var `ENABLE_CLOUDFRONT=true`.
+You should be able to create a distribution without the verification error. Then we re-add CF to `infra/template.yaml` and publish the UI.
+
+### When OIDC is truly fixed
+
+Actions → Deploy CampusAssist should get past **Configure AWS credentials (OIDC)**. Until then, deploy with local SAM + AWS CLI.
