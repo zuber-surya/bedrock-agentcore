@@ -32,7 +32,6 @@ jobs:
           cache-dependency-path: ui/package-lock.json
 
       - name: Configure AWS credentials (access keys)
-        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -40,11 +39,9 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Install SAM CLI
-        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
         uses: aws-actions/setup-sam@v2
 
       - name: Deploy infra (SAM)
-        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
         env:
           DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
         run: |
@@ -66,7 +63,6 @@ jobs:
               DocsBucketName=$DOCS_BUCKET
 
       - name: Sync KB docs to S3
-        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
         run: |
           aws s3 sync docs/kb "s3://${{ vars.DOCS_BUCKET }}/kb/" --delete
 
@@ -78,26 +74,19 @@ jobs:
           npm install
           npm run build
 
-      - name: Publish UI + invalidate CloudFront
-        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
+      - name: Publish UI summary
         run: |
-          UI_BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='UiBucketNameOut'].OutputValue" --output text)
-          DIST_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text)
           API=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" --output text)
-          CF=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='CloudFrontURL'].OutputValue" --output text)
-          if [ -z "$UI_BUCKET" ] || [ "$UI_BUCKET" = "None" ]; then
-            echo "CloudFront/UI outputs missing — API only deploy"
-            echo "API=$API" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          cd ui
-          VITE_API_URL="$API" npm run build
-          aws s3 sync dist "s3://${UI_BUCKET}/" --delete
-          aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"
+          UI_BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='UiBucketNameOut'].OutputValue" --output text || true)
+          DIST_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text || true)
+          CF=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='CloudFrontURL'].OutputValue" --output text || true)
           echo "API=$API" >> "$GITHUB_STEP_SUMMARY"
-          echo "UI=$CF" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Skip AWS deploy note
-        if: ${{ secrets.AWS_ACCESS_KEY_ID == '' }}
-        run: |
-          echo "AWS_ACCESS_KEY_ID secret not set — ran tests only." >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$UI_BUCKET" ] && [ "$UI_BUCKET" != "None" ] && [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
+            cd ui
+            VITE_API_URL="$API" npm run build
+            aws s3 sync dist "s3://${UI_BUCKET}/" --delete
+            aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"
+            echo "UI=$CF" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "CloudFront/UI not in stack — API-only deploy. Point local UI at API." >> "$GITHUB_STEP_SUMMARY"
+          fi
