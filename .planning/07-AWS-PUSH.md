@@ -146,12 +146,25 @@ Talk line: “Wave 1 proved hosting; Wave 2 swapped the brain to AgentCore + Man
 
 ---
 
-## Ready to execute?
+## Status (2026-09-05)
 
-Provide (or confirm):
+| Item | Status |
+|---|---|
+| Region | **us-east-1** (locked) |
+| GitHub | https://github.com/zuber-surya/bedrock-agentcore |
+| Wave 1 API | **Live** `https://3wfx35hyp2.execute-api.us-east-1.amazonaws.com/prod/chat` (`MOCK_MODE=true`) |
+| CloudFront UI | **Blocked** — AWS account must be verified for CloudFront (open Support case) |
+| GitHub Actions OIDC | Role created; AssumeRoleWithWebIdentity still failing — use local `sam deploy` until fixed |
+| Docs bucket | `campusassist-kb-zubersurya-771495376060` |
 
-1. **Region** (`ap-south-1` or `us-east-1`)  
-2. **GitHub repo** URL (or create one)  
-3. Whether you already have **AWS CLI** logged in  
+### Use live API with local UI
 
-Then we can run Wave 1: init git remote, push, or local `sam deploy`.
+```powershell
+cd ui
+$env:VITE_API_URL="https://3wfx35hyp2.execute-api.us-east-1.amazonaws.com/prod/chat"
+npm run dev
+```
+
+### Unblock CloudFront later
+
+AWS Console → Support → Account verification for CloudFront → then restore CF resources in `infra/template.yaml` and set GitHub var `ENABLE_CLOUDFRONT=true`.

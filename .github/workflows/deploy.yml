@@ -79,19 +79,25 @@ jobs:
           npm run build
 
       - name: Publish UI + invalidate CloudFront
-        if: ${{ vars.AWS_ROLE_ARN != '' }}
+        if: ${{ vars.AWS_ROLE_ARN != '' && vars.ENABLE_CLOUDFRONT == 'true' }}
         run: |
           UI_BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='UiBucketNameOut'].OutputValue" --output text)
           DIST_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text)
           API=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" --output text)
           CF=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='CloudFrontURL'].OutputValue" --output text)
-          # Rebuild UI with real API URL
           cd ui
           VITE_API_URL="$API" npm run build
           aws s3 sync dist "s3://${UI_BUCKET}/" --delete
           aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"
           echo "API=$API" >> "$GITHUB_STEP_SUMMARY"
           echo "UI=$CF" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Print API endpoint (no CloudFront)
+        if: ${{ vars.AWS_ROLE_ARN != '' && vars.ENABLE_CLOUDFRONT != 'true' }}
+        run: |
+          API=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" --output text)
+          echo "API=$API" >> "$GITHUB_STEP_SUMMARY"
+          echo "CloudFront skipped (account may need AWS Support verification). Point local UI at API with VITE_API_URL." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Skip AWS deploy note
         if: ${{ vars.AWS_ROLE_ARN == '' }}
