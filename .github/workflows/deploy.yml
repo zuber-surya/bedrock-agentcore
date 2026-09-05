@@ -49,6 +49,10 @@ jobs:
             echo "Set repository variable DOCS_BUCKET (globally unique S3 name)"
             exit 1
           fi
+          OVERRIDES="ProjectName=campusassist MockMode=${{ vars.MOCK_MODE || 'true' }} DocsBucketName=$DOCS_BUCKET"
+          if [ -n "${{ vars.AGENT_RUNTIME_ARN }}" ]; then
+            OVERRIDES="$OVERRIDES AgentRuntimeArn=${{ vars.AGENT_RUNTIME_ARN }}"
+          fi
           sam deploy \
             --template-file infra/template.yaml \
             --stack-name "$STACK_NAME" \
@@ -56,11 +60,7 @@ jobs:
             --capabilities CAPABILITY_IAM \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
-            --parameter-overrides \
-              ProjectName=campusassist \
-              MockMode=${{ vars.MOCK_MODE || 'true' }} \
-              AgentRuntimeArn=${{ vars.AGENT_RUNTIME_ARN || '' }} \
-              DocsBucketName=$DOCS_BUCKET
+            --parameter-overrides $OVERRIDES
 
       - name: Sync KB docs to S3
         run: |
