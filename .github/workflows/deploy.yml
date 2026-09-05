@@ -78,15 +78,21 @@ jobs:
         run: |
           API=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" --output text)
           UI_BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='UiBucketNameOut'].OutputValue" --output text || true)
+          UI_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='UiWebsiteURL'].OutputValue" --output text || true)
           DIST_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text || true)
           CF=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='CloudFrontURL'].OutputValue" --output text || true)
           echo "API=$API" >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$UI_BUCKET" ] && [ "$UI_BUCKET" != "None" ] && [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
+          if [ -n "$UI_BUCKET" ] && [ "$UI_BUCKET" != "None" ]; then
             cd ui
             VITE_API_URL="$API" npm run build
             aws s3 sync dist "s3://${UI_BUCKET}/" --delete
-            aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"
-            echo "UI=$CF" >> "$GITHUB_STEP_SUMMARY"
+            cd ..
+            if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
+              aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"
+              echo "UI=$CF" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "UI (HTTP, CloudFront pending account verification)=$UI_URL" >> "$GITHUB_STEP_SUMMARY"
+            fi
           else
-            echo "CloudFront/UI not in stack — API-only deploy. Point local UI at API." >> "$GITHUB_STEP_SUMMARY"
+            echo "UI bucket not in stack — API-only deploy. Point local UI at API." >> "$GITHUB_STEP_SUMMARY"
           fi

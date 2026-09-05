@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: CampusAssist — API Gateway + Invoke Lambda (Wave 1; no CloudFront until account verified)
+Description: CampusAssist — API Gateway + Invoke Lambda (CloudFront deferred until AWS account verified)
 
 Parameters:
   ProjectName:
@@ -18,6 +18,30 @@ Parameters:
     Description: Globally unique S3 bucket for KB docs
 
 Resources:
+  UiBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-ui-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: false
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+
+  UiBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref UiBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "${UiBucket.Arn}/*"
+
   DocsBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -108,6 +132,9 @@ Outputs:
     Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/prod/chat"
   DocsBucketNameOut:
     Value: !Ref DocsBucket
-  UiNote:
-    Description: CloudFront deferred until AWS account is verified for CloudFront
-    Value: "Run UI locally: cd ui && set VITE_API_URL=<ApiEndpoint> && npm run dev"
+  UiBucketNameOut:
+    Description: S3 bucket hosting the static UI (public, HTTP-only until CloudFront is verified)
+    Value: !Ref UiBucket
+  UiWebsiteURL:
+    Description: Public HTTP URL for the UI (S3 static website hosting; upgrade to CloudFront once account is verified)
+    Value: !Sub "http://${UiBucket}.s3-website-${AWS::Region}.amazonaws.com"
