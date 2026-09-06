@@ -154,7 +154,7 @@ Talk line: “Wave 1 proved hosting; Wave 2 swapped the brain to AgentCore + Man
 | GitHub | https://github.com/zuber-surya/bedrock-agentcore |
 | Wave 1 API | **Live** `https://3wfx35hyp2.execute-api.us-east-1.amazonaws.com/prod/chat` |
 | CloudFront | **NOT fixed** — create distribution still returns *account must be verified* (403). Open [AWS Support](https://console.aws.amazon.com/support/home) → Account and billing / service limit for CloudFront verification. Listing distributions works; **creating** does not. |
-| GitHub Actions OIDC | **NOT fixed** — latest run still `Not authorized to perform sts:AssumeRoleWithWebIdentity` on role `campusassist-github`. Keep using local `sam deploy` until trust/OIDC is corrected. |
+| GitHub Actions auth | **Fixed (Fix B)** — IAM user `campusassist-gha` + secrets `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (OIDC skipped) |
 | Docs bucket | `campusassist-kb-zubersurya-771495376060` |
 | Stack | `campusassist` rolled back after CF attempt; API stack still healthy |
 

@@ -6,13 +6,16 @@ Parameters:
   ProjectName:
     Type: String
     Default: campusassist
-  MockMode:
-    Type: String
-    Default: "true"
-    AllowedValues: ["true", "false"]
   AgentRuntimeArn:
     Type: String
     Default: ""
+  UseBedrock:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+  BedrockModelId:
+    Type: String
+    Default: "us.amazon.nova-lite-v1:0"
   DocsBucketName:
     Type: String
     Description: Globally unique S3 bucket for KB docs
@@ -63,14 +66,22 @@ Resources:
       MemorySize: 512
       Environment:
         Variables:
-          MOCK_MODE: !Ref MockMode
           AGENT_RUNTIME_ARN: !Ref AgentRuntimeArn
+          USE_BEDROCK: !Ref UseBedrock
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - bedrock:*
                 - bedrock-agentcore:*
+              Resource: "*"
+            - Sid: BedrockMarketplaceModelAccess
+              Effect: Allow
+              Action:
+                - aws-marketplace:Subscribe
+                - aws-marketplace:Unsubscribe
+                - aws-marketplace:ViewSubscriptions
               Resource: "*"
       Events:
         ChatPost:

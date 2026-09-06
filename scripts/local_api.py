@@ -1,7 +1,9 @@
-"""Local mock API for UI development: POST http://127.0.0.1:8080/chat"""
+"""Local chat API for UI development: POST http://127.0.0.1:8080/chat
+
+Requires USE_BEDROCK=true and BEDROCK_MODEL_ID (no mock / hardcoded replies).
+"""
 from __future__ import annotations
 
-import json
 import os
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -12,7 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lambda" / "tools"))
 sys.path.insert(0, str(ROOT / "lambda" / "invoke"))
 
-os.environ.setdefault("MOCK_MODE", "true")
+os.environ.setdefault("USE_BEDROCK", "true")
+os.environ.setdefault("BEDROCK_MODEL_ID", "us.amazon.nova-lite-v1:0")
+os.environ.pop("MOCK_MODE", None)
 
 from handler import handler  # noqa: E402
 
@@ -58,7 +62,7 @@ class ChatHandler(BaseHTTPRequestHandler):
 def main():
     port = int(os.environ.get("PORT", "8080"))
     server = HTTPServer(("127.0.0.1", port), ChatHandler)
-    print(f"CampusAssist mock API on http://127.0.0.1:{port}/chat")
+    print(f"CampusAssist API on http://127.0.0.1:{port}/chat (Bedrock required)")
     server.serve_forever()
 
 
