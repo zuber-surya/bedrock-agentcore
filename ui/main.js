@@ -40,22 +40,81 @@ function inlineMarkdown(escapedText) {
   return escapedText.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
 }
 
+function isTableSeparatorRow(line) {
+  return /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?$/.test(line.trim());
+}
+
+function parseTableRow(line) {
+  let s = line.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|")) s = s.slice(0, -1);
+  return s.split("|").map((cell) => cell.trim());
+}
+
 function renderMarkdown(raw) {
-  const blocks = escapeHtml(raw).split(/\n{2,}/);
-  return blocks
-    .map((block) => {
-      const lines = block.split("\n").filter((l) => l.trim() !== "");
-      if (lines.length === 0) return "";
-      const isList = lines.every((l) => /^[-*]\s+/.test(l.trim()));
-      if (isList) {
-        const items = lines
-          .map((l) => `<li>${inlineMarkdown(l.trim().replace(/^[-*]\s+/, ""))}</li>`)
-          .join("");
-        return `<ul>${items}</ul>`;
+  const lines = escapeHtml(raw).split("\n");
+  const html = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const trimmed = lines[i].trim();
+
+    if (trimmed === "") {
+      i++;
+      continue;
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      const level = Math.min(headingMatch[1].length + 2, 6);
+      html.push(`<h${level}>${inlineMarkdown(headingMatch[2])}</h${level}>`);
+      i++;
+      continue;
+    }
+
+    if (trimmed.startsWith("|") && i + 1 < lines.length && isTableSeparatorRow(lines[i + 1])) {
+      const headerCells = parseTableRow(trimmed);
+      i += 2;
+      const bodyRows = [];
+      while (i < lines.length && lines[i].trim().startsWith("|")) {
+        bodyRows.push(parseTableRow(lines[i]));
+        i++;
       }
-      return `<p>${lines.map(inlineMarkdown).join("<br>")}</p>`;
-    })
-    .join("");
+      const thead = `<thead><tr>${headerCells
+        .map((c) => `<th>${inlineMarkdown(c)}</th>`)
+        .join("")}</tr></thead>`;
+      const tbody = `<tbody>${bodyRows
+        .map((row) => `<tr>${row.map((c) => `<td>${inlineMarkdown(c)}</td>`).join("")}</tr>`)
+        .join("")}</tbody>`;
+      html.push(`<div class="table-wrap"><table>${thead}${tbody}</table></div>`);
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(trimmed)) {
+      const items = [];
+      while (i < lines.length && /^[-*]\s+/.test(lines[i].trim())) {
+        items.push(`<li>${inlineMarkdown(lines[i].trim().replace(/^[-*]\s+/, ""))}</li>`);
+        i++;
+      }
+      html.push(`<ul>${items.join("")}</ul>`);
+      continue;
+    }
+
+    const paraLines = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() !== "" &&
+      !/^#{1,6}\s+/.test(lines[i].trim()) &&
+      !/^[-*]\s+/.test(lines[i].trim()) &&
+      !(lines[i].trim().startsWith("|") && i + 1 < lines.length && isTableSeparatorRow(lines[i + 1]))
+    ) {
+      paraLines.push(inlineMarkdown(lines[i].trim()));
+      i++;
+    }
+    html.push(`<p>${paraLines.join("<br>")}</p>`);
+  }
+
+  return html.join("");
 }
 
 function addBubble(role, text, extras = {}) {

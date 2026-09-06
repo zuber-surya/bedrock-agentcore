@@ -143,6 +143,46 @@ body {
   font-weight: 600;
 }
 
+.msg.bot h1,
+.msg.bot h2,
+.msg.bot h3,
+.msg.bot h4,
+.msg.bot h5,
+.msg.bot h6 {
+  margin: 0 0 0.4rem;
+  font-family: var(--display);
+  color: var(--brand-deep);
+  line-height: 1.25;
+}
+
+.msg.bot .table-wrap {
+  overflow-x: auto;
+  margin: 0 0 0.5rem;
+}
+
+.msg.bot .table-wrap:last-child {
+  margin-bottom: 0;
+}
+
+.msg.bot table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.msg.bot th,
+.msg.bot td {
+  border: 1px solid var(--line);
+  padding: 0.35rem 0.55rem;
+  text-align: left;
+  white-space: normal;
+}
+
+.msg.bot th {
+  background: #f3fafb;
+  font-weight: 600;
+}
+
 .msg.system {
   align-self: center;
   background: transparent;
