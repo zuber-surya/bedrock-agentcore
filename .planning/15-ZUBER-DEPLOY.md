@@ -15,11 +15,15 @@ Date: 2026-09-06
 | Item | Value |
 |------|--------|
 | Nova | AUTHORIZED (live-bedrock works) |
-| Managed KB | `campusassist-kb` / `5OEIVJG5VE` |
-| Data source | `GG2C3WMFKH` — ingest COMPLETE (7 docs) |
+| Managed KB (legacy unused) | `campusassist-kb` / `5OEIVJG5VE` |
+| S3 Vectors KB (live Retrieve) | `campusassist-kb-s3vectors` / `WHR65SMI6I` |
+| S3 Vectors index | `campusassist-kb-vectors-zuber` / `campusassist-kb-index` |
+| Data source | `BHYJWSVBYJ` — ingest COMPLETE (9 docs) |
 | AgentCore runtime | `campusassistagent-4AErABEsnY` **READY** |
 | Runtime ARN | `arn:aws:bedrock-agentcore:us-east-1:390403887579:runtime/campusassistagent-4AErABEsnY` |
-| Invoke Lambda env | `AGENT_RUNTIME_ARN` → runtime above (wired) |
+| Placement AgentCore | `campusassistplacement-BikVib9h9p` **READY** |
+| Placement Runtime ARN | `arn:aws:bedrock-agentcore:us-east-1:390403887579:runtime/campusassistplacement-BikVib9h9p` |
+| Invoke Lambda env | `AGENT_RUNTIME_ARN` → campus; `AGENT_RUNTIME_ARN_PLACEMENT` → placement |
 | Agent package | arm64 Linux deps vendored in ZIP (`uv pip --python-platform aarch64-manylinux2014`) |
 | Runtime version | **2** (deps + `app.run()` entrypoint) |
 
@@ -39,3 +43,10 @@ Repo variables / secrets must target this account (not `771495376060`):
 - Vars: `TARGET_AWS_ACCOUNT_ID=390403887579`, `DOCS_BUCKET=campusassist-kb-zuber-390403887579`, `API_URL` (prod `/chat`), `AGENT_RUNTIME_ARN`, models, `USE_BEDROCK=true`
 - Workflow fails fast if `sts get-caller-identity` account ≠ `TARGET_AWS_ACCOUNT_ID`
 - Placement runtime: set `AGENT_RUNTIME_ARN_PLACEMENT` after that AgentCore is created (optional until then)
+
+## Placement AgentCore (2026-09-07)
+- Runtime: `campusassistplacement-BikVib9h9p` **READY**
+- ARN: `arn:aws:bedrock-agentcore:us-east-1:390403887579:runtime/campusassistplacement-BikVib9h9p`
+- Artifact: `s3://campusassist-kb-zuber-390403887579/agentcore/campusassist-placement.zip`
+- Logs: `/aws/bedrock-agentcore/runtimes/campusassistplacement-BikVib9h9p-DEFAULT`
+- Invoke Lambda + GitHub var `AGENT_RUNTIME_ARN_PLACEMENT` wired; smoke: `[route] path=agentcore agent=placement`

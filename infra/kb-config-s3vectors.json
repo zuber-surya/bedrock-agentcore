@@ -1,0 +1,13 @@
+{
+  "knowledgeBaseId": "WHR65SMI6I",
+  "name": "campusassist-kb-s3vectors",
+  "type": "VECTOR",
+  "storageType": "S3_VECTORS",
+  "vectorBucket": "campusassist-kb-vectors-zuber",
+  "indexName": "campusassist-kb-index",
+  "dataSourceId": "BHYJWSVBYJ",
+  "embeddingModelArn": "arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0",
+  "docsBucket": "campusassist-kb-zuber-390403887579",
+  "docsPrefix": "kb/",
+  "nonFilterableMetadataKeys": ["AMAZON_BEDROCK_TEXT", "AMAZON_BEDROCK_METADATA"]
+}

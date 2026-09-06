@@ -22,6 +22,10 @@ Parameters:
   BedrockFallbackModelId:
     Type: String
     Default: "us.amazon.nova-lite-v1:0"
+  KnowledgeBaseId:
+    Type: String
+    Default: ""
+    Description: Bedrock Knowledge Base ID (S3 Vectors Retrieve)
   DocsBucketName:
     Type: String
     Description: Globally unique S3 bucket for KB docs
@@ -77,6 +81,7 @@ Resources:
           USE_BEDROCK: !Ref UseBedrock
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           BEDROCK_FALLBACK_MODEL_ID: !Ref BedrockFallbackModelId
+          KNOWLEDGE_BASE_ID: !Ref KnowledgeBaseId
       Policies:
         - Statement:
             - Effect: Allow
@@ -84,6 +89,12 @@ Resources:
                 - bedrock:*
                 - bedrock-agentcore:*
               Resource: "*"
+            - Sid: BedrockKbRetrieve
+              Effect: Allow
+              Action:
+                - bedrock:Retrieve
+                - bedrock:RetrieveAndGenerate
+              Resource: !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:knowledge-base/*"
             - Sid: BedrockMarketplaceModelAccess
               Effect: Allow
               Action:

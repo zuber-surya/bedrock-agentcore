@@ -31,18 +31,23 @@ If the question is about admission, exams, fees, or general academics, politely 
 
 SOURCES OF TRUTH:
 1. Knowledge base snippets from the placement docs.
-2. If the snippets do not contain the answer, say you do not have that information and suggest contacting placement@demo-college.edu. Never invent company lists or CGPA cutoffs.
+2. If the snippets do not contain the answer, say you do not have that information and suggest contacting placement@demo-college.edu.
+   Never invent company lists, drive dates, CGPA cutoffs, or contact details.
 
 ACCURACY:
-- Quote exact CGPA, percentages, dates, and table values from the snippets.
-- Do not invent drives or companies not present in the context.
+- Quote exact CGPA, percentages, arrears rules, windows, phone/email, and company names from the snippets.
+- Do not invent drives, companies, sectors, or columns that are not in the snippets.
+- Prefer the snippet's own wording for lists (keep company names as written).
 
 CITATION FORMAT:
 - Do not mention document names inside the main answer.
 - After the answer, on a final line: Source: <document title>
 
-FORMAT:
-- Short scannable markdown: **bold**, headings, bullets, or a small table when useful.
+MARKDOWN FORMAT:
+- Short scannable markdown: **bold**, headings (#/##), bullets (-).
+- For tables: put a blank line before and after the table; each row on its own line;
+  header row, then a separator row like | --- | --- |, then body rows; every row must start and end with |.
+- If a clean pipe table is awkward, use a bullet list instead of a broken table.
 """
 
 LOG = logging.getLogger("campusassist.placement")
@@ -67,6 +72,11 @@ def _mlog(tag: str, **fields: Any) -> None:
             text = text[:237] + "..."
         parts.append(f"{key}={text}")
     LOG.info(" ".join(parts))
+    for h in LOG.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
 
 
 def run_placement_assist(message: str, session_id: str) -> dict[str, Any]:
@@ -157,8 +167,20 @@ def gather_context(message: str) -> dict[str, Any]:
             "kbSnippets": [],
         }
 
-    hits = _search_kb(lower)[:3]
-    _mlog("kb", root=str(KB_ROOT), hitCount=len(hits))
+    hits_raw = _retrieve_kb(message, uri_contains="placement/")
+    if hits_raw is not None:
+        hits = hits_raw
+        method = "retrieve"
+    else:
+        hits = _search_kb(lower)[:3]
+        method = "keyword"
+    _mlog(
+        "kb",
+        root=str(KB_ROOT),
+        method=method,
+        hitCount=len(hits),
+        kbId=os.environ.get("KNOWLEDGE_BASE_ID", "") or None,
+    )
     citations: list[dict[str, str]] = []
     kb_snippets: list[dict[str, str]] = []
     for hit in hits:
@@ -202,7 +224,9 @@ def bedrock_generate(
     user_content = (
         f"User question: {message}\n\n"
         f"Placement KB context JSON:\n{json.dumps(payload, indent=2)}\n\n"
-        "Write the final answer for the student using exact values from the snippets."
+        "Write the final answer for the student using only exact values from the snippets.\n"
+        "Do not invent companies, sectors, or dates. Use valid pipe-table markdown "
+        "(blank line before table; header; | --- | --- |; body rows) or bullets."
     )
     chain = _bedrock_model_chain(model_id)
     last_exc: Exception | None = None
@@ -304,6 +328,77 @@ def _section_score(heading: str, body: list[str], keywords: list[str]) -> int:
 def _section_snippet(heading: str, body: list[str]) -> str:
     parts = ([heading] if heading else []) + body
     return " ".join(parts)[:600]
+
+
+def _title_from_s3_uri(uri: str) -> str:
+    """Map s3://bucket/kb/placement/overview.md -> placement/overview.md."""
+    if not uri:
+        return "placement"
+    marker = "/kb/"
+    if marker in uri:
+        return uri.split(marker, 1)[1]
+    if uri.startswith("s3://"):
+        parts = uri.split("/")
+        return "/".join(parts[3:]) if len(parts) > 3 else uri
+    return uri
+
+
+def _retrieve_kb(
+    query: str, *, uri_contains: str | None = None, number_of_results: int = 3
+) -> list[dict[str, Any]] | None:
+    """Bedrock Knowledge Bases Retrieve (S3 Vectors). None => keyword fallback.
+
+    S3 Vectors does not support STRING_CONTAINS filters, so uri_contains is
+    applied client-side against the result S3 URI.
+    """
+    kb_id = (os.environ.get("KNOWLEDGE_BASE_ID") or "").strip()
+    if not kb_id:
+        return None
+    try:
+        import boto3
+
+        client = boto3.client("bedrock-agent-runtime")
+        # Over-fetch when URI-filtering so placement chunks still fill topK.
+        fetch_n = max(number_of_results * 5, 10) if uri_contains else number_of_results
+        resp = client.retrieve(
+            knowledgeBaseId=kb_id,
+            retrievalQuery={"text": query},
+            retrievalConfiguration={
+                "vectorSearchConfiguration": {"numberOfResults": fetch_n}
+            },
+        )
+        hits: list[dict[str, Any]] = []
+        for item in resp.get("retrievalResults") or []:
+            meta = item.get("metadata") or {}
+            loc = item.get("location") or {}
+            s3_loc = loc.get("s3Location") or {}
+            uri = (
+                s3_loc.get("uri")
+                or meta.get("x-amz-bedrock-kb-source-uri")
+                or ""
+            )
+            if uri_contains and uri_contains not in str(uri):
+                continue
+            text = ((item.get("content") or {}).get("text") or "").strip()
+            if not text:
+                continue
+            title = _title_from_s3_uri(str(uri))
+            if not title.startswith("placement/"):
+                title = f"placement/{title}" if title else "placement/overview.md"
+            hits.append(
+                {
+                    "title": title,
+                    # Keep enough text for full placement overview (~1.7KB); 600 was truncating companies/eligibility.
+                    "snippet": text[:4000],
+                    "score": item.get("score"),
+                }
+            )
+            if len(hits) >= number_of_results:
+                break
+        return hits
+    except Exception as exc:  # noqa: BLE001 — fallback to keyword search
+        _mlog("kb", method="retrieve", error=str(exc))
+        return None
 
 
 def _search_kb(lower: str) -> list[dict[str, Any]]:

@@ -61,7 +61,7 @@ jobs:
             echo "Set repository variable DOCS_BUCKET (globally unique S3 name)"
             exit 1
           fi
-          OVERRIDES="ProjectName=campusassist UseBedrock=${{ vars.USE_BEDROCK || 'true' }} BedrockModelId=${{ vars.BEDROCK_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0' }} BedrockFallbackModelId=${{ vars.BEDROCK_FALLBACK_MODEL_ID || 'us.amazon.nova-lite-v1:0' }} DocsBucketName=$DOCS_BUCKET"
+          OVERRIDES="ProjectName=campusassist UseBedrock=${{ vars.USE_BEDROCK || 'true' }} BedrockModelId=${{ vars.BEDROCK_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0' }} BedrockFallbackModelId=${{ vars.BEDROCK_FALLBACK_MODEL_ID || 'us.amazon.nova-lite-v1:0' }} DocsBucketName=$DOCS_BUCKET KnowledgeBaseId=${{ vars.KNOWLEDGE_BASE_ID || 'WHR65SMI6I' }}"
           if [ -n "${{ vars.AGENT_RUNTIME_ARN }}" ]; then
             OVERRIDES="$OVERRIDES AgentRuntimeArn=${{ vars.AGENT_RUNTIME_ARN }}"
           fi
@@ -82,6 +82,20 @@ jobs:
           DOCS_BUCKET: ${{ vars.DOCS_BUCKET || 'campusassist-kb-zuber-390403887579' }}
         run: |
           aws s3 sync docs/kb "s3://${DOCS_BUCKET}/kb/" --delete
+
+      - name: Start KB ingestion (S3 Vectors)
+        env:
+          KNOWLEDGE_BASE_ID: ${{ vars.KNOWLEDGE_BASE_ID || 'WHR65SMI6I' }}
+          KB_DATA_SOURCE_ID: ${{ vars.KB_DATA_SOURCE_ID || 'BHYJWSVBYJ' }}
+        run: |
+          if [ -z "$KNOWLEDGE_BASE_ID" ] || [ -z "$KB_DATA_SOURCE_ID" ]; then
+            echo "Skip ingestion (KNOWLEDGE_BASE_ID / KB_DATA_SOURCE_ID unset)"
+            exit 0
+          fi
+          aws bedrock-agent start-ingestion-job \
+            --knowledge-base-id "$KNOWLEDGE_BASE_ID" \
+            --data-source-id "$KB_DATA_SOURCE_ID" \
+            --region "$AWS_REGION" || true
 
       - name: Build UI
         working-directory: ui

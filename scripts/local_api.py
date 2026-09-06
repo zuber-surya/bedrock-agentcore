@@ -10,6 +10,14 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+# Windows / non-TTY: logging to stdout is fully buffered unless we force line buffering.
+os.environ.setdefault("PYTHONUNBUFFERED", "1")
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lambda" / "tools"))
 sys.path.insert(0, str(ROOT / "lambda" / "invoke"))
@@ -70,15 +78,21 @@ class ChatHandler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
         self.wfile.write((result.get("body") or "").encode("utf-8"))
+        sys.stdout.flush()
+        sys.stderr.flush()
 
     def log_message(self, fmt, *args):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+        sys.stderr.flush()
 
 
 def main():
     port = int(os.environ.get("PORT", "8080"))
     server = HTTPServer(("127.0.0.1", port), ChatHandler)
-    print(f"CampusAssist API on http://127.0.0.1:{port}/chat (Bedrock required)")
+    print(
+        f"CampusAssist API on http://127.0.0.1:{port}/chat (Bedrock required)",
+        flush=True,
+    )
     server.serve_forever()
 
 

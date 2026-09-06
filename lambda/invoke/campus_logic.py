@@ -62,6 +62,8 @@ TOOL ACTIONS:
 FORMAT FOR THIS LIVE DEMO:
 - Prefer short, scannable answers (a short heading, bullets, or a small table when useful).
 - Use markdown the UI can render: **bold**, headings (#/##), bullet lists (-), and pipe tables.
+- For tables: blank line before and after; each row on its own line; header, then | --- | --- |, then body;
+  every row must start and end with |. If unsure, use bullets instead of a broken table.
 - Always end with the Source line after the answer body.
 """
 
@@ -88,6 +90,11 @@ def _mlog(tag: str, **fields: Any) -> None:
             text = text[:237] + "..."
         parts.append(f"{key}={text}")
     LOG.info(" ".join(parts))
+    for h in LOG.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
 
 
 def run_campus_assist(message: str, session_id: str) -> dict[str, Any]:
@@ -242,13 +249,20 @@ def gather_context(message: str) -> dict[str, Any]:
     if not tools_used:
         _mlog("tools", matched="none")
 
-    hits = _search_kb(lower)[:3]
+    retrieved = _retrieve_kb(message)
+    if retrieved is not None:
+        hits = retrieved
+        method = "retrieve"
+    else:
+        hits = _search_kb(lower)[:3]
+        method = "keyword_line_score"
     _mlog(
         "kb",
         root=str(KB_ROOT),
-        method="keyword_line_score",
+        method=method,
         topK=3,
         hitCount=len(hits),
+        kbId=os.environ.get("KNOWLEDGE_BASE_ID", "") or None,
     )
     for hit in hits:
         citations.append({"title": hit["title"], "snippet": hit["snippet"]})
@@ -416,6 +430,71 @@ def _section_score(heading: str, body: list[str], keywords: list[str]) -> int:
 def _section_snippet(heading: str, body: list[str]) -> str:
     parts = ([heading] if heading else []) + body
     return " ".join(parts)[:600]
+
+
+def _title_from_s3_uri(uri: str) -> str:
+    """Map s3://bucket/kb/fees/fee-policy.md -> fees/fee-policy.md."""
+    if not uri:
+        return "kb"
+    marker = "/kb/"
+    if marker in uri:
+        return uri.split(marker, 1)[1]
+    if uri.startswith("s3://"):
+        parts = uri.split("/")
+        return "/".join(parts[3:]) if len(parts) > 3 else uri
+    return uri
+
+
+def _retrieve_kb(
+    query: str, *, uri_contains: str | None = None, number_of_results: int = 3
+) -> list[dict[str, Any]] | None:
+    """Bedrock Knowledge Bases Retrieve (S3 Vectors). None => caller should keyword-fallback.
+
+    S3 Vectors does not support STRING_CONTAINS filters; uri_contains is client-side.
+    """
+    kb_id = (os.environ.get("KNOWLEDGE_BASE_ID") or "").strip()
+    if not kb_id:
+        return None
+    try:
+        import boto3
+
+        client = boto3.client("bedrock-agent-runtime")
+        fetch_n = max(number_of_results * 5, 10) if uri_contains else number_of_results
+        resp = client.retrieve(
+            knowledgeBaseId=kb_id,
+            retrievalQuery={"text": query},
+            retrievalConfiguration={
+                "vectorSearchConfiguration": {"numberOfResults": fetch_n}
+            },
+        )
+        hits: list[dict[str, Any]] = []
+        for item in resp.get("retrievalResults") or []:
+            meta = item.get("metadata") or {}
+            loc = item.get("location") or {}
+            s3_loc = loc.get("s3Location") or {}
+            uri = (
+                s3_loc.get("uri")
+                or meta.get("x-amz-bedrock-kb-source-uri")
+                or ""
+            )
+            if uri_contains and uri_contains not in str(uri):
+                continue
+            text = ((item.get("content") or {}).get("text") or "").strip()
+            if not text:
+                continue
+            hits.append(
+                {
+                    "title": _title_from_s3_uri(str(uri)),
+                    "snippet": text[:4000],
+                    "score": item.get("score"),
+                }
+            )
+            if len(hits) >= number_of_results:
+                break
+        return hits
+    except Exception as exc:  # noqa: BLE001 — fallback to keyword search
+        _mlog("kb", method="retrieve", error=str(exc))
+        return None
 
 
 def _search_kb(lower: str) -> list[dict[str, Any]]:

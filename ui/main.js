@@ -42,7 +42,17 @@ function inlineMarkdown(escapedText) {
 }
 
 function isTableSeparatorRow(line) {
-  return /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?$/.test(line.trim());
+  const t = line.trim();
+  // Accept |---|---|, | --- | --- |, :---:|:---:, and rows without leading/trailing pipe.
+  return /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?$/.test(t);
+}
+
+function looksLikeTableRow(line) {
+  const t = line.trim();
+  if (!t.includes("|")) return false;
+  if (isTableSeparatorRow(t)) return false;
+  // At least two cells: "a | b" or "| a | b |"
+  return (t.match(/\|/g) || []).length >= 1 && /\|/.test(t.slice(1));
 }
 
 function parseTableRow(line) {
@@ -53,7 +63,8 @@ function parseTableRow(line) {
 }
 
 function renderMarkdown(raw) {
-  const lines = escapeHtml(raw).split("\n");
+  // Normalize odd model output: lone CR, and packed "| --- |" separators.
+  const lines = escapeHtml(raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n")).split("\n");
   const html = [];
   let i = 0;
 
@@ -73,11 +84,15 @@ function renderMarkdown(raw) {
       continue;
     }
 
-    if (trimmed.startsWith("|") && i + 1 < lines.length && isTableSeparatorRow(lines[i + 1])) {
+    if (
+      looksLikeTableRow(trimmed) &&
+      i + 1 < lines.length &&
+      isTableSeparatorRow(lines[i + 1])
+    ) {
       const headerCells = parseTableRow(trimmed);
       i += 2;
       const bodyRows = [];
-      while (i < lines.length && lines[i].trim().startsWith("|")) {
+      while (i < lines.length && looksLikeTableRow(lines[i])) {
         bodyRows.push(parseTableRow(lines[i]));
         i++;
       }
@@ -107,7 +122,11 @@ function renderMarkdown(raw) {
       lines[i].trim() !== "" &&
       !/^#{1,6}\s+/.test(lines[i].trim()) &&
       !/^[-*]\s+/.test(lines[i].trim()) &&
-      !(lines[i].trim().startsWith("|") && i + 1 < lines.length && isTableSeparatorRow(lines[i + 1]))
+      !(
+        looksLikeTableRow(lines[i]) &&
+        i + 1 < lines.length &&
+        isTableSeparatorRow(lines[i + 1])
+      )
     ) {
       paraLines.push(inlineMarkdown(lines[i].trim()));
       i++;
@@ -144,11 +163,15 @@ function addBubble(role, text, extras = {}) {
     }
 
     for (const c of extras.citations || []) {
-      const cite = document.createElement("div");
+      const cite = document.createElement("details");
       cite.className = "citation";
-      cite.innerHTML = `<strong>📄 ${escapeHtml(c.title || "Source")}</strong>${escapeHtml(
-        c.snippet || ""
-      )}`;
+      const summary = document.createElement("summary");
+      summary.textContent = c.title || "Source";
+      const snippet = document.createElement("div");
+      snippet.className = "citation-snippet";
+      snippet.textContent = c.snippet || "";
+      cite.appendChild(summary);
+      cite.appendChild(snippet);
       meta.appendChild(cite);
     }
 

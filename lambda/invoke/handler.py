@@ -29,6 +29,15 @@ if not LOG.handlers:
     LOG.setLevel(logging.INFO)
     LOG.propagate = False
 
+
+def _route_log(msg: str, *args: object) -> None:
+    LOG.info(msg, *args)
+    for h in LOG.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
+
 PLACEMENT_KEYWORDS = (
     "placement",
     "campus drive",
@@ -98,14 +107,14 @@ def handler(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
 def _run_placement(message: str, session_id: str) -> dict[str, Any]:
     arn = (os.environ.get("AGENT_RUNTIME_ARN_PLACEMENT") or "").strip()
     if arn:
-        LOG.info(
+        _route_log(
             "[route] path=agentcore agent=placement arn=%s sessionId=%s message=%s",
             arn,
             session_id,
             message.replace("\n", " ")[:200],
         )
         return invoke_agentcore(message, session_id, arn=arn)
-    LOG.info(
+    _route_log(
         "[route] path=in-lambda agent=placement sessionId=%s message=%s",
         session_id,
         message.replace("\n", " ")[:200],
@@ -118,14 +127,14 @@ def _run_placement(message: str, session_id: str) -> dict[str, Any]:
 def _run_campus(message: str, session_id: str) -> dict[str, Any]:
     arn = (os.environ.get("AGENT_RUNTIME_ARN") or "").strip()
     if arn:
-        LOG.info(
+        _route_log(
             "[route] path=agentcore agent=campus arn=%s sessionId=%s message=%s",
             arn,
             session_id,
             message.replace("\n", " ")[:200],
         )
         return invoke_agentcore(message, session_id, arn=arn)
-    LOG.info(
+    _route_log(
         "[route] path=in-lambda agent=campus sessionId=%s message=%s",
         session_id,
         message.replace("\n", " ")[:200],
@@ -152,7 +161,7 @@ def invoke_agentcore(message: str, session_id: str, arn: str | None = None) -> d
         if len(runtime_session) < 33:
             runtime_session = f"{runtime_session}-{uuid.uuid4()}"
         runtime_session = runtime_session[:100]
-        LOG.info(
+        _route_log(
             "[route] invoke_agent_runtime arn=%s runtimeSessionId=%s",
             runtime_arn,
             runtime_session,
@@ -172,7 +181,7 @@ def invoke_agentcore(message: str, session_id: str, arn: str | None = None) -> d
             parsed = json.loads(text)
             if isinstance(parsed, dict) and "reply" in parsed:
                 parsed.setdefault("sessionId", session_id)
-                LOG.info(
+                _route_log(
                     "[route] agentcore_ok mode=%s toolsUsed=%s citations=%s",
                     parsed.get("mode"),
                     parsed.get("toolsUsed"),
@@ -189,7 +198,7 @@ def invoke_agentcore(message: str, session_id: str, arn: str | None = None) -> d
             "mode": "agentcore",
         }
     except Exception as exc:  # noqa: BLE001 — demo proxy should never 500 blankly
-        LOG.info("[route] agentcore_error error=%s", exc)
+        _route_log("[route] agentcore_error error=%s", exc)
         return {
             "reply": f"AgentCore invoke failed: {exc}",
             "citations": [],

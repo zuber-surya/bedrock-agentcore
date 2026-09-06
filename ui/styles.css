@@ -211,9 +211,38 @@ body {
   padding: 0.45rem 0.6rem;
 }
 
-.citation strong {
-  display: block;
-  margin-bottom: 0.15rem;
+.citation > summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.citation > summary::-webkit-details-marker {
+  display: none;
+}
+
+.citation > summary::before {
+  content: "▸";
+  flex-shrink: 0;
+  color: var(--brand);
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+.citation[open] > summary::before {
+  content: "▾";
+}
+
+.citation-snippet {
+  margin-top: 0.4rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid color-mix(in srgb, var(--brand) 18%, transparent);
+  color: #3a4a4f;
+  white-space: pre-wrap;
+  line-height: 1.4;
 }
 
 .badges {

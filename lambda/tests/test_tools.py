@@ -54,12 +54,53 @@ class ToolTests(unittest.TestCase):
 
 
 class CampusAssistTests(unittest.TestCase):
+    def setUp(self):
+        # Unit tests assert keyword KB behavior unless a test mocks Retrieve.
+        self._env = mock.patch.dict(os.environ, {"KNOWLEDGE_BASE_ID": ""}, clear=False)
+        self._env.start()
+
+    def tearDown(self):
+        self._env.stop()
+
     def test_gather_attendance_kb_snippets(self):
         ctx = gather_context("What is the minimum attendance for semester exams?")
         self.assertFalse(ctx["offTopic"])
         self.assertTrue(len(ctx["citations"]) >= 1)
         self.assertTrue(any("75%" in c["snippet"] or "attendance" in c["snippet"].lower() for c in ctx["citations"]))
         self.assertEqual(ctx.get("toolResults"), [])
+
+    def test_retrieve_kb_citations(self):
+        fake = {
+            "retrievalResults": [
+                {
+                    "content": {"text": "Minimum 75% attendance required for semester exams."},
+                    "location": {
+                        "type": "S3",
+                        "s3Location": {
+                            "uri": "s3://campusassist-kb-zuber-390403887579/kb/exams/exam-rules.md"
+                        },
+                    },
+                    "score": 0.91,
+                }
+            ]
+        }
+        with mock.patch.dict(os.environ, {"KNOWLEDGE_BASE_ID": "WHR65SMI6I"}, clear=False):
+            with mock.patch("boto3.client") as client_factory:
+                client_factory.return_value.retrieve.return_value = fake
+                ctx = gather_context("What is the minimum attendance for semester exams?")
+        self.assertEqual(ctx["citations"][0]["title"], "exams/exam-rules.md")
+        self.assertIn("75%", ctx["citations"][0]["snippet"])
+        client_factory.return_value.retrieve.assert_called_once()
+
+    def test_keyword_fallback_when_retrieve_fails(self):
+        with mock.patch.dict(os.environ, {"KNOWLEDGE_BASE_ID": "WHR65SMI6I"}, clear=False):
+            with mock.patch("boto3.client") as client_factory:
+                client_factory.return_value.retrieve.side_effect = RuntimeError("boom")
+                ctx = gather_context("What is the minimum attendance for semester exams?")
+        self.assertTrue(len(ctx["citations"]) >= 1)
+        self.assertTrue(
+            any("75%" in c["snippet"] or "attendance" in c["snippet"].lower() for c in ctx["citations"])
+        )
 
     def test_gather_deadline_tool(self):
         ctx = gather_context("Last date for B.Tech admission this year?")
@@ -126,13 +167,47 @@ class CampusAssistTests(unittest.TestCase):
         self.assertEqual(body.get("agent"), "campus")
 
     def test_placement_kb_eligibility(self):
-        ctx = placement_gather("Am I eligible for campus placement?")
+        with mock.patch.dict(os.environ, {"KNOWLEDGE_BASE_ID": ""}, clear=False):
+            ctx = placement_gather("Am I eligible for campus placement?")
         self.assertFalse(ctx["offTopic"])
         self.assertTrue(any(c["title"].startswith("placement/") for c in ctx["citations"]))
         self.assertTrue(
             any("6.5" in c["snippet"] or "CGPA" in c["snippet"] for c in ctx["citations"]),
             msg=f"citations={ctx['citations']}",
         )
+
+    def test_placement_retrieve_filters_uri(self):
+        fake = {
+            "retrievalResults": [
+                {
+                    "content": {"text": "Minimum CGPA 6.5 for campus placement."},
+                    "location": {
+                        "type": "S3",
+                        "s3Location": {
+                            "uri": "s3://campusassist-kb-zuber-390403887579/kb/placement/overview.md"
+                        },
+                    },
+                    "score": 0.88,
+                },
+                {
+                    "content": {"text": "Tuition is 75000 — should be filtered out."},
+                    "location": {
+                        "type": "S3",
+                        "s3Location": {
+                            "uri": "s3://campusassist-kb-zuber-390403887579/kb/fees/fee-policy.md"
+                        },
+                    },
+                    "score": 0.5,
+                },
+            ]
+        }
+        with mock.patch.dict(os.environ, {"KNOWLEDGE_BASE_ID": "WHR65SMI6I"}, clear=False):
+            with mock.patch("boto3.client") as client_factory:
+                client_factory.return_value.retrieve.return_value = fake
+                ctx = placement_gather("Am I eligible for campus placement?")
+        self.assertTrue(all(c["title"].startswith("placement/") for c in ctx["citations"]))
+        self.assertTrue(any("6.5" in c["snippet"] for c in ctx["citations"]))
+        self.assertFalse(any("75000" in c["snippet"] for c in ctx["citations"]))
 
     def test_handler_routes_placement_question(self):
         with mock.patch.dict(
