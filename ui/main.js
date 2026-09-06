@@ -36,10 +36,36 @@ function renderChips() {
   }
 }
 
+function inlineMarkdown(escapedText) {
+  return escapedText.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+}
+
+function renderMarkdown(raw) {
+  const blocks = escapeHtml(raw).split(/\n{2,}/);
+  return blocks
+    .map((block) => {
+      const lines = block.split("\n").filter((l) => l.trim() !== "");
+      if (lines.length === 0) return "";
+      const isList = lines.every((l) => /^[-*]\s+/.test(l.trim()));
+      if (isList) {
+        const items = lines
+          .map((l) => `<li>${inlineMarkdown(l.trim().replace(/^[-*]\s+/, ""))}</li>`)
+          .join("");
+        return `<ul>${items}</ul>`;
+      }
+      return `<p>${lines.map(inlineMarkdown).join("<br>")}</p>`;
+    })
+    .join("");
+}
+
 function addBubble(role, text, extras = {}) {
   const div = document.createElement("div");
   div.className = `msg ${role}`;
-  div.textContent = text;
+  if (role === "bot") {
+    div.innerHTML = renderMarkdown(text);
+  } else {
+    div.textContent = text;
+  }
 
   if (role === "bot" && (extras.citations?.length || extras.toolsUsed?.length)) {
     const meta = document.createElement("div");

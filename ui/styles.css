@@ -38,7 +38,7 @@ body {
 }
 
 .app {
-  width: min(760px, 100%);
+  width: min(1100px, 100%);
   min-height: calc(100vh - 2.5rem);
   display: grid;
   grid-template-rows: auto auto 1fr auto auto;
@@ -123,6 +123,24 @@ body {
   align-self: flex-start;
   background: var(--bot);
   border: 1px solid var(--line);
+}
+
+.msg.bot p,
+.msg.bot ul {
+  margin: 0 0 0.5rem;
+}
+
+.msg.bot p:last-child,
+.msg.bot ul:last-child {
+  margin-bottom: 0;
+}
+
+.msg.bot ul {
+  padding-left: 1.2rem;
+}
+
+.msg.bot strong {
+  font-weight: 600;
 }
 
 .msg.system {
