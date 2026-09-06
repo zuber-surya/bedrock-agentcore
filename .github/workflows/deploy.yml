@@ -11,6 +11,8 @@ permissions:
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   STACK_NAME: campusassist
+  # Target account: IAM user zuber (override only if migrating)
+  TARGET_AWS_ACCOUNT_ID: ${{ vars.TARGET_AWS_ACCOUNT_ID || '390403887579' }}
 
 jobs:
   deploy:
@@ -31,19 +33,29 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
-      - name: Configure AWS credentials (access keys)
+      - name: Configure AWS credentials (zuber access keys)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Verify AWS account is zuber
+        run: |
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          ARN=$(aws sts get-caller-identity --query Arn --output text)
+          echo "Caller: $ARN"
+          if [ "$ACCOUNT" != "$TARGET_AWS_ACCOUNT_ID" ]; then
+            echo "::error::Expected account $TARGET_AWS_ACCOUNT_ID (zuber), got $ACCOUNT. Update GitHub secrets AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY to the zuber IAM user."
+            exit 1
+          fi
+
       - name: Install SAM CLI
         uses: aws-actions/setup-sam@v2
 
       - name: Deploy infra (SAM)
         env:
-          DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
+          DOCS_BUCKET: ${{ vars.DOCS_BUCKET || 'campusassist-kb-zuber-390403887579' }}
         run: |
           if [ -z "$DOCS_BUCKET" ]; then
             echo "Set repository variable DOCS_BUCKET (globally unique S3 name)"
@@ -66,13 +78,15 @@ jobs:
             --parameter-overrides $OVERRIDES
 
       - name: Sync KB docs to S3
+        env:
+          DOCS_BUCKET: ${{ vars.DOCS_BUCKET || 'campusassist-kb-zuber-390403887579' }}
         run: |
-          aws s3 sync docs/kb "s3://${{ vars.DOCS_BUCKET }}/kb/" --delete
+          aws s3 sync docs/kb "s3://${DOCS_BUCKET}/kb/" --delete
 
       - name: Build UI
         working-directory: ui
         env:
-          VITE_API_URL: ${{ vars.API_URL || '/chat' }}
+          VITE_API_URL: ${{ vars.API_URL || 'https://hrw28diu26.execute-api.us-east-1.amazonaws.com/prod/chat' }}
         run: |
           npm install
           npm run build
@@ -84,6 +98,7 @@ jobs:
           UI_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='UiWebsiteURL'].OutputValue" --output text || true)
           DIST_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text || true)
           CF=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='CloudFrontURL'].OutputValue" --output text || true)
+          echo "Account=$TARGET_AWS_ACCOUNT_ID" >> "$GITHUB_STEP_SUMMARY"
           echo "API=$API" >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$UI_BUCKET" ] && [ "$UI_BUCKET" != "None" ]; then
             cd ui

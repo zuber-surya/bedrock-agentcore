@@ -32,3 +32,10 @@ Root cause: ZIP had source + `requirements.txt` only. Direct code deploy needs *
 Also: `main.py` always calls `app.run()` under AgentCore; invoke payload uses flat `{prompt, sessionId}`.
 
 Old account `771495376060` left as-is.
+
+## GitHub Actions (zuber)
+Repo variables / secrets must target this account (not `771495376060`):
+- Secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` for IAM `zuber`
+- Vars: `TARGET_AWS_ACCOUNT_ID=390403887579`, `DOCS_BUCKET=campusassist-kb-zuber-390403887579`, `API_URL` (prod `/chat`), `AGENT_RUNTIME_ARN`, models, `USE_BEDROCK=true`
+- Workflow fails fast if `sts get-caller-identity` account ≠ `TARGET_AWS_ACCOUNT_ID`
+- Placement runtime: set `AGENT_RUNTIME_ARN_PLACEMENT` after that AgentCore is created (optional until then)
