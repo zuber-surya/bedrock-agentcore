@@ -25,6 +25,7 @@ assert spec.loader is not None
 spec.loader.exec_module(invoke_mod)
 
 from campus_logic import gather_context, run_campus_assist  # noqa: E402
+from placement_logic import gather_context as placement_gather  # noqa: E402
 
 
 class ToolTests(unittest.TestCase):
@@ -105,7 +106,11 @@ class CampusAssistTests(unittest.TestCase):
     def test_handler_routes_to_campus_logic(self):
         with mock.patch.dict(
             os.environ,
-            {"AGENT_RUNTIME_ARN": "", "USE_BEDROCK": "false"},
+            {
+                "AGENT_RUNTIME_ARN": "",
+                "AGENT_RUNTIME_ARN_PLACEMENT": "",
+                "USE_BEDROCK": "false",
+            },
             clear=False,
         ):
             result = invoke_mod.handler(
@@ -118,6 +123,38 @@ class CampusAssistTests(unittest.TestCase):
         self.assertEqual(result["statusCode"], 200)
         body = __import__("json").loads(result["body"])
         self.assertEqual(body["mode"], "error")
+        self.assertEqual(body.get("agent"), "campus")
+
+    def test_placement_kb_eligibility(self):
+        ctx = placement_gather("Am I eligible for campus placement?")
+        self.assertFalse(ctx["offTopic"])
+        self.assertTrue(any(c["title"].startswith("placement/") for c in ctx["citations"]))
+        self.assertTrue(
+            any("6.5" in c["snippet"] or "CGPA" in c["snippet"] for c in ctx["citations"]),
+            msg=f"citations={ctx['citations']}",
+        )
+
+    def test_handler_routes_placement_question(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AGENT_RUNTIME_ARN": "",
+                "AGENT_RUNTIME_ARN_PLACEMENT": "",
+                "USE_BEDROCK": "false",
+            },
+            clear=False,
+        ):
+            result = invoke_mod.handler(
+                {
+                    "httpMethod": "POST",
+                    "body": json_body("Am I eligible for campus placement?"),
+                },
+                None,
+            )
+        self.assertEqual(result["statusCode"], 200)
+        body = __import__("json").loads(result["body"])
+        self.assertEqual(body.get("agent"), "placement")
+        self.assertEqual(body["mode"], "error")  # Bedrock disabled in test
 
 
 def json_body(message: str) -> str:

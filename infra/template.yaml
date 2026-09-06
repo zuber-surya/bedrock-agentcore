@@ -9,6 +9,9 @@ Parameters:
   AgentRuntimeArn:
     Type: String
     Default: ""
+  AgentRuntimeArnPlacement:
+    Type: String
+    Default: ""
   UseBedrock:
     Type: String
     Default: "true"
@@ -70,6 +73,7 @@ Resources:
       Environment:
         Variables:
           AGENT_RUNTIME_ARN: !Ref AgentRuntimeArn
+          AGENT_RUNTIME_ARN_PLACEMENT: !Ref AgentRuntimeArnPlacement
           USE_BEDROCK: !Ref UseBedrock
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           BEDROCK_FALLBACK_MODEL_ID: !Ref BedrockFallbackModelId

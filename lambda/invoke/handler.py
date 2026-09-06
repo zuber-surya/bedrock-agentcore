@@ -1,7 +1,8 @@
-"""API Gateway → AgentCore Runtime or campus_logic (Bedrock + tools).
+"""API Gateway → Placement or CampusAssist AgentCore / in-process logic.
 
 Env:
-  AGENT_RUNTIME_ARN — optional AgentCore runtime ARN
+  AGENT_RUNTIME_ARN — CampusAssist AgentCore runtime ARN (optional)
+  AGENT_RUNTIME_ARN_PLACEMENT — Placement AgentCore runtime ARN (optional)
   USE_BEDROCK / BEDROCK_MODEL_ID — required when AgentCore ARN is unset
 """
 from __future__ import annotations
@@ -27,6 +28,35 @@ if not LOG.handlers:
     LOG.addHandler(_h)
     LOG.setLevel(logging.INFO)
     LOG.propagate = False
+
+PLACEMENT_KEYWORDS = (
+    "placement",
+    "campus drive",
+    "recruit",
+    "job offer",
+    "company visit",
+    "companies for",
+    "company for campus",
+    "internship drive",
+    "t&p",
+    "t and p",
+    "training and placement",
+    "ppo",
+    "eligible for campus",
+    "placement eligibility",
+    "cgpa for placement",
+    "sitting for drive",
+    "placement contact",
+    "t&p contact",
+    "placement cell",
+    "placement@",
+    "agency for placement",
+)
+
+
+def is_placement_question(message: str) -> bool:
+    lower = (message or "").lower()
+    return any(k in lower for k in PLACEMENT_KEYWORDS)
 
 
 def handler(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
@@ -55,50 +85,80 @@ def handler(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
     if not message:
         return _resp(400, {"error": "message is required", "sessionId": session_id})
 
-    agent_arn = (os.environ.get("AGENT_RUNTIME_ARN") or "").strip()
-    if agent_arn:
-        LOG.info(
-            "[route] path=agentcore arn=%s qualifier=DEFAULT sessionId=%s message=%s",
-            agent_arn,
-            session_id,
-            message.replace("\n", " ")[:200],
-        )
-        result = invoke_agentcore(message, session_id)
+    if is_placement_question(message):
+        result = _run_placement(message, session_id)
+        result.setdefault("agent", "placement")
     else:
-        LOG.info(
-            "[route] path=in-lambda sessionId=%s message=%s",
-            session_id,
-            message.replace("\n", " ")[:200],
-        )
-        from campus_logic import run_campus_assist
-
-        result = run_campus_assist(message, session_id)
+        result = _run_campus(message, session_id)
+        result.setdefault("agent", "campus")
 
     return _resp(200, result)
+
+
+def _run_placement(message: str, session_id: str) -> dict[str, Any]:
+    arn = (os.environ.get("AGENT_RUNTIME_ARN_PLACEMENT") or "").strip()
+    if arn:
+        LOG.info(
+            "[route] path=agentcore agent=placement arn=%s sessionId=%s message=%s",
+            arn,
+            session_id,
+            message.replace("\n", " ")[:200],
+        )
+        return invoke_agentcore(message, session_id, arn=arn)
+    LOG.info(
+        "[route] path=in-lambda agent=placement sessionId=%s message=%s",
+        session_id,
+        message.replace("\n", " ")[:200],
+    )
+    from placement_logic import run_placement_assist
+
+    return run_placement_assist(message, session_id)
+
+
+def _run_campus(message: str, session_id: str) -> dict[str, Any]:
+    arn = (os.environ.get("AGENT_RUNTIME_ARN") or "").strip()
+    if arn:
+        LOG.info(
+            "[route] path=agentcore agent=campus arn=%s sessionId=%s message=%s",
+            arn,
+            session_id,
+            message.replace("\n", " ")[:200],
+        )
+        return invoke_agentcore(message, session_id, arn=arn)
+    LOG.info(
+        "[route] path=in-lambda agent=campus sessionId=%s message=%s",
+        session_id,
+        message.replace("\n", " ")[:200],
+    )
+    from campus_logic import run_campus_assist
+
+    return run_campus_assist(message, session_id)
 
 
 def _resp(status: int, body: dict[str, Any]) -> dict[str, Any]:
     return {"statusCode": status, "headers": CORS, "body": json.dumps(body)}
 
 
-def invoke_agentcore(message: str, session_id: str) -> dict[str, Any]:
+def invoke_agentcore(message: str, session_id: str, arn: str | None = None) -> dict[str, Any]:
     """Invoke Bedrock AgentCore Runtime. Returns structured error on failure."""
     try:
         import boto3
 
         client = boto3.client("bedrock-agentcore")
-        arn = os.environ["AGENT_RUNTIME_ARN"]
-        # AgentCore requires runtimeSessionId length 33–100
+        runtime_arn = (arn or os.environ.get("AGENT_RUNTIME_ARN") or "").strip()
+        if not runtime_arn:
+            raise RuntimeError("AgentCore ARN is empty")
         runtime_session = session_id
         if len(runtime_session) < 33:
             runtime_session = f"{runtime_session}-{uuid.uuid4()}"
         runtime_session = runtime_session[:100]
         LOG.info(
-            "[route] invoke_agent_runtime runtimeSessionId=%s",
+            "[route] invoke_agent_runtime arn=%s runtimeSessionId=%s",
+            runtime_arn,
             runtime_session,
         )
         response = client.invoke_agent_runtime(
-            agentRuntimeArn=arn,
+            agentRuntimeArn=runtime_arn,
             runtimeSessionId=runtime_session,
             qualifier="DEFAULT",
             payload=json.dumps({"prompt": message, "sessionId": session_id}),

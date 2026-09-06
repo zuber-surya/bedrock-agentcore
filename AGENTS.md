@@ -55,7 +55,7 @@ When changing chat logic or tool outputs, update or extend the relevant tests in
 - Chat logic lives in `agent/campus_logic.py`, mirrored byte-for-byte at `lambda/invoke/campus_logic.py` — change one, copy into the other.
 - Target AWS account: `390403887579` (IAM user `zuber`), region `us-east-1`. See [.planning/15-ZUBER-DEPLOY.md](.planning/15-ZUBER-DEPLOY.md).
 - LLM: primary `us.anthropic.claude-haiku-4-5-20251001-v1:0`, backup `us.amazon.nova-lite-v1:0` (`BEDROCK_FALLBACK_MODEL_ID`).
-- The AgentCore deployment path is via [agent/agentcore.yaml](agent/agentcore.yaml) and `agentcore deploy` from the [agent](agent) directory. On the zuber account, Invoke Lambda has `AGENT_RUNTIME_ARN` set to the deployed runtime.
+- CampusAssist AgentCore: [agent/](agent/) + `AGENT_RUNTIME_ARN`. Placement agent: [agent-placement/](agent-placement/) + KB under [docs/kb/placement](docs/kb/placement); routed by [lambda/invoke/handler.py](lambda/invoke/handler.py) via `AGENT_RUNTIME_ARN_PLACEMENT` (or in-process `placement_logic` locally).
 - Deployment details and env variables are documented in [README.md](README.md); follow that source of truth rather than inventing new infrastructure patterns.
 - The app is demo-grade; prioritize correctness and repo clarity over broad abstraction or framework churn.
 

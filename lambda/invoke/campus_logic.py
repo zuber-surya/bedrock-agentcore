@@ -60,8 +60,9 @@ TOOL ACTIONS:
 - Never guess a student ID — ask for it if not provided.
 
 FORMAT FOR THIS LIVE DEMO:
-- Keep answers to 2–4 sentences plus the Source line.
-- Plain sentences, no markdown headers, no long bullet lists.
+- Prefer short, scannable answers (a short heading, bullets, or a small table when useful).
+- Use markdown the UI can render: **bold**, headings (#/##), bullet lists (-), and pipe tables.
+- Always end with the Source line after the answer body.
 """
 
 LOG = logging.getLogger("campusassist.message")
@@ -438,6 +439,9 @@ def _search_kb(lower: str) -> list[dict[str, Any]]:
         return []
     hits: list[dict[str, Any]] = []
     for path in KB_ROOT.rglob("*.md"):
+        rel = str(path.relative_to(KB_ROOT)).replace("\\", "/")
+        if rel.startswith("placement/"):
+            continue
         text = path.read_text(encoding="utf-8")
         sections = _kb_sections(text)
         if not sections:
@@ -448,7 +452,6 @@ def _search_kb(lower: str) -> list[dict[str, Any]]:
         )
         if best_score <= 0:
             continue
-        rel = str(path.relative_to(KB_ROOT)).replace("\\", "/")
         # Prefer fee policy for fee/tuition questions
         if any(k in lower for k in ("fee", "tuition", "tution")) and rel.startswith("fees/"):
             best_score += 5

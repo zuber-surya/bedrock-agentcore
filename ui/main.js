@@ -4,6 +4,7 @@ const PROMPTS = [
   "Last date for B.Tech admission this year?",
   "What documents are required for admission?",
   "Raise a support ticket for fee clarification",
+  "Am I eligible for campus placement?",
 ];
 
 const API_URL = import.meta.env.VITE_API_URL || "/chat";

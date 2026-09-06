@@ -1,6 +1,6 @@
 # 12 — Requirements, Tech Stack & AWS Services (as-built)
 
-Status snapshot: 2026-09-06. Reflects what is actually deployed and verified live, not just what was planned in [00-OVERVIEW.md](00-OVERVIEW.md) / [01-ARCHITECTURE.md](01-ARCHITECTURE.md). Where the two differ, this doc calls it out explicitly.
+Status snapshot: 2026-09-06 (rewritten — supersedes the earlier version of this doc, which described Wave 1 on account `771495376060` with Nova Lite and `MOCK_MODE`; none of that reflects the current deployment). Reflects what is actually deployed and verified live on account `390403887579` (IAM user `zuber`), not just what was planned in [00-OVERVIEW.md](00-OVERVIEW.md) / [01-ARCHITECTURE.md](01-ARCHITECTURE.md).
 
 ---
 
@@ -14,9 +14,10 @@ Status snapshot: 2026-09-06. Reflects what is actually deployed and verified liv
 | F2 | Off-topic questions are politely refused, not hallucinated. |
 | F3 | Structured queries (admission deadline, exam schedule) are answered by deterministic tools, not free-text generation. |
 | F4 | Users can raise a support ticket ("fee clarification") and receive a ticket ID. |
-| F5 | Answers backed by knowledge-base content include a source citation. |
-| F6 | Every response returns a consistent JSON contract: `{ reply, citations, toolsUsed, sessionId }`. |
+| F5 | Answers backed by knowledge-base content cite the source document, on its own line, separate from the answer text. |
+| F6 | Every response returns a consistent JSON contract: `{ reply, citations, toolsUsed, sessionId, mode }`. |
 | F7 | A browser-based chat UI is reachable over a public URL without running anything locally. |
+| F8 | The chat UI renders the reply's markdown (bold, bullet lists, headings, tables) instead of showing raw markdown syntax. |
 
 ### Non-functional / constraints (locked decisions, see [00-OVERVIEW.md](00-OVERVIEW.md))
 
@@ -25,9 +26,10 @@ Status snapshot: 2026-09-06. Reflects what is actually deployed and verified liv
 | N1 | No Docker, no ECR — agent/tooling deployed as plain Lambda ZIP / AgentCore direct-code deploy. |
 | N2 | No OpenSearch Serverless — RAG must not depend on a self-managed vector store. |
 | N3 | No EC2. |
-| N4 | Infra as code (SAM), deployed via GitHub Actions on push to `main`. |
+| N4 | Infra as code (SAM), deployed via GitHub Actions on push to `main` — currently only wired to the old, abandoned account (see §6). |
 | N5 | Demo-grade cost target: ~$5–25 for the build+demo window, budget alerts at $25/$50. |
-| N6 | Region: `us-east-1` (chosen over `ap-south-1` since AgentCore availability wasn't confirmed there). |
+| N6 | Region: `us-east-1`. |
+| N7 | Bedrock is mandatory — there is no mock mode. If both the primary and fallback model calls fail, the raw exception becomes the reply rather than a canned/hardcoded answer. |
 
 ---
 
@@ -35,76 +37,69 @@ Status snapshot: 2026-09-06. Reflects what is actually deployed and verified liv
 
 | Layer | Choice |
 |---|---|
-| UI | Vite + vanilla JS/HTML/CSS, single page (`ui/`) |
+| UI | Vite + vanilla JS/HTML/CSS, single page (`ui/`), dependency-free markdown renderer (bold/bullets/headings/tables) for bot replies |
 | API | Amazon API Gateway (HTTP API), `POST /chat` |
-| Compute | AWS Lambda, Python 3.12 (`lambda/invoke`, `lambda/tools`) |
-| Model | Amazon Bedrock Converse API, model `us.amazon.nova-lite-v1:0` (Nova Lite) |
-| Knowledge base | Markdown files under `docs/kb/`, keyword-matched at request time (see §4 gap notes — not yet a Bedrock Managed Knowledge Base) |
+| Compute | AWS Lambda, Python 3.12 (`lambda/invoke`, `lambda/tools`) + Bedrock AgentCore Runtime (`agent/`) |
+| Model | Amazon Bedrock Converse API — primary `us.anthropic.claude-haiku-4-5-20251001-v1:0`, fallback `us.amazon.nova-lite-v1:0` |
+| Knowledge base | Markdown files under `docs/kb/`, section-based keyword match at request time (`_search_kb`/`_kb_sections` in `campus_logic.py`) — a real Bedrock Managed Knowledge Base (`campusassist-kb`) exists and is ingested but is not called by any code path (see §4 gap notes) |
 | IaC | AWS SAM (`infra/template.yaml`) |
 | CI/CD | GitHub Actions (`.github/workflows/deploy.yml`, `teardown.yml`) |
 | Storage | Amazon S3 (KB docs bucket + UI static-site bucket) |
 | Testing | Python `unittest` (`lambda/tests/test_tools.py`) |
-| Agent runtime (planned, not yet live) | Bedrock AgentCore Runtime + Gateway (`agent/`, `agent/agentcore.yaml`) |
+| Agent runtime | Bedrock AgentCore Runtime — deployed and live (`agent/`, `agent/agentcore.yaml`), invoke Lambda routes to it via `AGENT_RUNTIME_ARN` |
 
 ---
 
-## 3. AWS services in use — step by step
+## 3. AWS services in use, with reference docs
 
-Each step is what was actually configured/deployed, in the order it happened, with the AWS service(s) it introduced.
+| Service | Used for | Status | AWS docs |
+|---|---|---|---|
+| **IAM** | User `zuber`; Lambda/AgentCore/KB execution roles; `aws-marketplace:Subscribe/Unsubscribe/ViewSubscriptions` grant (Nova Lite is Marketplace-listed) | Live | https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html |
+| **AWS CloudFormation** (via **AWS SAM**) | Deploys the whole `campusassist` stack from `infra/template.yaml` | Live | https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/Welcome.html · https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/what-is-sam.html |
+| **Amazon S3** | `campusassist-kb-zuber-390403887579` (KB docs, synced from `docs/kb/`); `campusassist-ui-390403887579` (static website hosting for the UI) | Live | https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html |
+| **AWS Lambda** | `campusassist-invoke` (the `/chat` handler, routes to AgentCore Runtime); 3 standalone tool functions (deployed, not wired to any caller) | Live | https://docs.aws.amazon.com/lambda/latest/dg/welcome.html |
+| **Amazon API Gateway** (HTTP API) | `POST /chat` + `OPTIONS /chat` (CORS) → invoke Lambda, stage `prod` | Live | https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api.html |
+| **Amazon Bedrock — Converse API** | LLM call in `bedrock_generate()`; primary `us.anthropic.claude-haiku-4-5-20251001-v1:0`, fallback `us.amazon.nova-lite-v1:0` on failure | Live (`mode: live-bedrock`) | https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference.html |
+| **Bedrock AgentCore Runtime** | `campusassistagent-4AErABEsnY`; invoke Lambda calls it via `AGENT_RUNTIME_ARN` and `invoke_agent_runtime` | Live | https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/what-is-bedrock-agentcore.html |
+| **Bedrock Knowledge Bases** | `campusassist-kb`, 7 docs ingested from the docs S3 bucket, manually verified via console Retrieve | **Provisioned but unused** — no code calls Retrieve/RetrieveAndGenerate; the app still keyword-searches bundled markdown locally | https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base.html |
+| **Amazon CloudWatch** | Lambda/API Gateway logs; explicit structured `_mlog(...)` lines in `campus_logic.py` designed for CloudWatch | Live (implicit) | https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/WhatIsCloudWatch.html |
+| **Amazon CloudFront** | Was planned for HTTPS UI hosting | **Not used** — blocked by account verification on the old account; this account's UI runs off plain S3 website hosting (HTTP only) instead | https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Introduction.html |
+| **AWS Marketplace** | Model subscription Nova Lite requires before Bedrock will invoke it (fallback path) | Live (permission, not a standalone resource) | https://docs.aws.amazon.com/marketplace/latest/buyerguide/buyer-getting-started.html |
 
-1. **IAM** — created IAM user `campusassist-gha` with an access-key pair for GitHub Actions (switched away from an OIDC role after `sts:AssumeRoleWithWebIdentity` kept failing — see [08-OIDC-FIX.md](08-OIDC-FIX.md)). Also created the execution roles SAM auto-generates for each Lambda, and a policy statement granting the invoke Lambda `bedrock:*`, `bedrock-agentcore:*`, and `aws-marketplace:Subscribe/Unsubscribe/ViewSubscriptions` (the last one needed because Nova Lite is a Marketplace-listed model).
-2. **AWS CloudFormation (via AWS SAM)** — `infra/template.yaml` defines and deploys every resource below as one stack, `campusassist`.
-3. **Amazon S3** — two buckets:
-   - `campusassist-kb-zubersurya-771495376060` (`DocsBucket`) — holds the KB markdown docs, synced from `docs/kb/` on every deploy.
-   - `campusassist-ui-771495376060` (`UiBucket`) — static website hosting for the built Vite UI (public read, `index.html` as both index and error document). Added specifically as an HTTP fallback because CloudFront is blocked (see step 8).
-4. **AWS Lambda** — four functions, all Python 3.12, deployed as plain ZIP (no container/ECR per constraint N1):
-   - `campusassist-invoke` — the `/chat` handler; decides mock vs. AgentCore vs. direct Bedrock path (see §4).
-   - `campusassist-admission-deadline`, `campusassist-exam-schedule`, `campusassist-create-ticket` — standalone tool functions defined in the stack but not yet wired to anything that calls them over the network (the invoke path currently calls the same Python functions in-process instead of through Gateway — see gap notes).
-5. **Amazon API Gateway (HTTP API)** — `POST /chat` and `OPTIONS /chat` (CORS preflight) routed to the invoke Lambda, stage `prod`.
-6. **Amazon Bedrock (Converse API)** — invoke Lambda calls `bedrock-runtime.converse()` directly with model `us.amazon.nova-lite-v1:0` when `USE_BEDROCK=true`. Model access request submitted in Bedrock console; **not yet approved** (`ValidationException: Operation not allowed`) — see step 9.
-7. **Amazon CloudWatch** — implicit: Lambda + API Gateway logs and metrics (default SAM/Lambda wiring, no custom dashboards/alarms yet).
-8. **Amazon CloudFront** — attempted, blocked. Creating a distribution returns `403 Access Denied — Your account must be verified before you can add new CloudFront resources` (see [09-HELP-REQUEST.md](09-HELP-REQUEST.md)). AWS Support case needed; S3 static-site hosting (step 3) is the interim public-URL workaround.
-9. **Bedrock model access request** — submitted via console for Nova Lite; account `771495376060` has not completed the use-case form, so live calls fall back to a grounded (tool + KB, no LLM) answer with `mode: live-grounded` instead of `mode: live-bedrock` (see [11-LIVE-BEDROCK.md](11-LIVE-BEDROCK.md)).
-10. **GitHub Actions (external to AWS, but drives all of the above)** — on push to `main`: run unit tests → configure AWS credentials (access keys) → `sam deploy` → sync `docs/kb` to S3 → build UI with the live API URL baked in → sync `ui/dist` to the UI bucket → invalidate CloudFront only if a distribution exists.
-
-### Not yet implemented (planned in [01-ARCHITECTURE.md](01-ARCHITECTURE.md), still pending)
-
-- **Bedrock AgentCore Runtime** — `agent/main.py` + `agent/agentcore.yaml` exist and run locally/as a CLI smoke test, but nothing has been deployed to AgentCore Runtime yet; `AGENT_RUNTIME_ARN` is unset, so the invoke Lambda never takes that code path.
-- **Bedrock AgentCore Gateway** — the three tool Lambdas are deployed but not registered as Gateway tools; tool calls currently happen via direct Python function calls inside the invoke Lambda.
-- **Bedrock Managed Knowledge Base** — "RAG" today is a keyword search over markdown files bundled directly into the Lambda ZIP (`lambda/invoke/kb/`, mirrored from `docs/kb/`), not a real vector-indexed Managed Knowledge Base reading from S3.
-- **CloudFront** — blocked on AWS account verification (step 8).
+Not AWS: **GitHub Actions** drives `sam deploy`, but its secrets still point at the old, abandoned account (`771495376060`) — see §6.
 
 ---
 
-## 4. Process followed (chronological)
+## 4. Known gaps against the target architecture
 
-1. **Scope and lock decisions** — wrote [00-OVERVIEW.md](00-OVERVIEW.md) (goal, audience, excluded services, cost target) and [01-ARCHITECTURE.md](01-ARCHITECTURE.md) (target 8-service architecture, request path, repo layout) before writing code.
-2. **Build locally, mock-first** — implemented `lambda/tools/handlers.py` (deadline/schedule/ticket logic), `lambda/invoke/handler.py` (mock chat brain + KB keyword search), the Vite UI, and `scripts/local_api.py` for a no-AWS demo loop. Added `docs/kb/` markdown as the seed knowledge base.
-3. **Test** — `lambda/tests/test_tools.py` (unittest) covering tool outputs and mock chat behavior; run in CI before every deploy.
-4. **Infra as code** — wrote `infra/template.yaml` (SAM) for the API Gateway + invoke Lambda + tool Lambdas + docs bucket; `infra/samconfig.toml.example` for local `sam deploy` reference.
-5. **Wire CI/CD** — `.github/workflows/deploy.yml` (test → deploy → sync KB → build+publish UI) and `teardown.yml`. First attempt used a GitHub OIDC IAM role (`campusassist-github`); it failed to assume (`sts:AssumeRoleWithWebIdentity` not authorized, `RoleLastUsed` empty). Switched to a dedicated IAM user with access-key secrets (Fix B, see [08-OIDC-FIX.md](08-OIDC-FIX.md)) — deploy went green.
-6. **Wave 1 — get something live on AWS** — deployed the `campusassist` stack (API Gateway + invoke Lambda + tool Lambdas + docs bucket) with `MOCK_MODE=true`, dropped CloudFront from the template after the account-verification 403 (see [07-AWS-PUSH.md](07-AWS-PUSH.md)), confirmed the `/chat` API live, ran the UI locally against it.
-7. **Public UI without CloudFront** — added the `UiBucket` (S3 static website hosting, public read policy) to `infra/template.yaml` and taught `deploy.yml` to publish `ui/dist` to it on every deploy, giving a public HTTP demo URL independent of the CloudFront blocker.
-8. **File the CloudFront blocker** — wrote [09-HELP-REQUEST.md](09-HELP-REQUEST.md) as a shareable brief for AWS Support (account ID, exact error, request IDs, what's already working).
-9. **Wave 2 — move off mock** — flipped `MOCK_MODE=false`, added `USE_BEDROCK`/`BEDROCK_MODEL_ID` parameters and env vars to the invoke Lambda, added the Marketplace IAM permissions Nova Lite requires, and pointed the live path at `agent/campus_logic.py`-equivalent logic (`run_campus_assist`) instead of the pure mock brain — see [10-WAVE2-AGENTCORE.md](10-WAVE2-AGENTCORE.md) for the full checklist (AgentCore Runtime/Gateway/Managed KB steps in that checklist are still open).
-10. **Hit the Bedrock model-access blocker** — live calls to `Converse` return `ValidationException: Operation not allowed` because the account hasn't completed Bedrock's model-access use-case form; documented the fix path in [11-LIVE-BEDROCK.md](11-LIVE-BEDROCK.md). The invoke Lambda degrades gracefully to `mode: live-grounded` (tools + KB, no LLM) instead of failing the request.
-11. **Verify current live state** (used to write this doc): `POST /chat` on the live API returns `mode: "live-grounded"` with a `bedrockError` field showing the exact Bedrock rejection — confirming steps 6–10 above are deployed but the model-access step is still blocking full `live-bedrock` mode.
+- **Managed Knowledge Base is provisioned but disconnected.** `campusassist-kb` exists, is ingested, and was verified once via the console — nothing in `agent/campus_logic.py` / `lambda/invoke/campus_logic.py` calls `bedrock-agent-runtime` Retrieve. RAG grounding today is entirely the local `_search_kb` keyword/section match over bundled markdown.
+- **AgentCore Gateway is not used.** The three tool Lambdas (`AdmissionDeadlineFunction`, `ExamScheduleFunction`, `CreateTicketFunction`) are deployed but nothing calls them over the network — `gather_context()` calls the same Python functions in-process instead.
+- **Triple file duplication, kept in sync by hand** (SAM's `CodeUri` for `InvokeFunction` is `lambda/invoke/`, so anything the Lambda needs at runtime must physically live there — no build step copies it in):
+  - `agent/campus_logic.py` == `lambda/invoke/campus_logic.py`
+  - `lambda/tools/handlers.py` == `lambda/invoke/handlers.py`
+  - `docs/kb/**/*.md` == `lambda/invoke/kb/**/*.md`
+- **System prompt references tools that don't exist**: `agent/campus_logic.py`'s `SYSTEM` constant mentions `checkStudentRecord` and `raiseGrievance`, neither of which is implemented (the real tools are `create_ticket`, `get_admission_deadline`, `get_exam_schedule`). Flagged, not yet fixed.
+- **CloudFront was never retried on this account** — the account-verification block was hit on `771495376060`; nobody has attempted CloudFront on `390403887579` yet. The UI is served over plain HTTP via S3 website hosting.
 
 ---
 
-## 5. Live endpoints (current)
+## 5. Live endpoints (current — account `390403887579`)
 
-| What | URL |
+| What | Value |
 |---|---|
-| Chat API | `https://3wfx35hyp2.execute-api.us-east-1.amazonaws.com/prod/chat` |
-| UI (S3 static site, HTTP only) | `http://campusassist-ui-771495376060.s3-website-us-east-1.amazonaws.com` |
-| Docs bucket | `campusassist-kb-zubersurya-771495376060` |
+| Chat API | `https://hrw28diu26.execute-api.us-east-1.amazonaws.com/prod/chat` |
+| UI (S3 static site, HTTP only) | `http://campusassist-ui-390403887579.s3-website-us-east-1.amazonaws.com` |
+| Docs bucket | `campusassist-kb-zuber-390403887579` |
+| Managed KB | `campusassist-kb` |
+| AgentCore Runtime | `campusassistagent-4AErABEsnY` |
 | Stack | `campusassist` (CloudFormation, `us-east-1`) |
 
-## 6. Open items before this matches the original target architecture
+Verified live (2026-09-06): `POST /chat` with "what is the tution fees for B.Tech" returns `mode: "live-bedrock"`, the correct fee table figures (₹75,000 tuition/semester, etc.), and a `Source: fees/fee-policy.md` line per the system prompt's citation format.
 
-- [ ] Get AWS account `771495376060` verified for CloudFront ([09-HELP-REQUEST.md](09-HELP-REQUEST.md)) → move UI to HTTPS.
-- [ ] Get Bedrock model access approved for Nova Lite ([11-LIVE-BEDROCK.md](11-LIVE-BEDROCK.md)) → `mode: live-bedrock`.
-- [ ] Deploy `agent/` to AgentCore Runtime and set `AGENT_RUNTIME_ARN` ([10-WAVE2-AGENTCORE.md](10-WAVE2-AGENTCORE.md), step D).
-- [ ] Register the three tool Lambdas as AgentCore Gateway tools instead of calling them in-process (step E).
-- [ ] Replace the bundled-markdown keyword search with a real Bedrock Managed Knowledge Base reading from the docs S3 bucket (step C).
+## 6. Open items
+
+- [ ] **GitHub Actions still deploys to the old account** (`771495376060`, secrets never rotated after the move to `zuber`). A push to `main` does not affect the live endpoints above — every deploy so far has been manual.
+- [ ] Wire `_search_kb` to actually call the provisioned Managed Knowledge Base instead of local keyword search.
+- [ ] Register the three tool Lambdas as AgentCore Gateway tools instead of in-process calls.
+- [ ] Fix the `checkStudentRecord`/`raiseGrievance` mismatch in the system prompt.
+- [ ] Decide whether to pursue CloudFront + HTTPS on the new account, or accept HTTP-only S3 hosting for the demo.

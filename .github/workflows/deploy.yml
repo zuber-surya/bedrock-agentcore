@@ -53,6 +53,9 @@ jobs:
           if [ -n "${{ vars.AGENT_RUNTIME_ARN }}" ]; then
             OVERRIDES="$OVERRIDES AgentRuntimeArn=${{ vars.AGENT_RUNTIME_ARN }}"
           fi
+          if [ -n "${{ vars.AGENT_RUNTIME_ARN_PLACEMENT }}" ]; then
+            OVERRIDES="$OVERRIDES AgentRuntimeArnPlacement=${{ vars.AGENT_RUNTIME_ARN_PLACEMENT }}"
+          fi
           sam deploy \
             --template-file infra/template.yaml \
             --stack-name "$STACK_NAME" \

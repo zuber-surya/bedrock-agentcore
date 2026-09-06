@@ -1,0 +1,10 @@
+# AgentCore direct code deploy — Placement agent (no Docker).
+# Deploy from agent-placement/ after configure.
+name: campusassist-placement
+entrypoint: main.py
+runtime: python3.12
+deployment: direct_code
+environment:
+  USE_BEDROCK: "true"
+  BEDROCK_MODEL_ID: "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+  BEDROCK_FALLBACK_MODEL_ID: "us.amazon.nova-lite-v1:0"
