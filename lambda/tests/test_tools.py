@@ -28,6 +28,18 @@ from campus_logic import gather_context, run_campus_assist  # noqa: E402
 from placement_logic import gather_context as placement_gather  # noqa: E402
 
 
+def _fake_boto3_client(retrieve_return=None, retrieve_side_effect=None):
+    """CI has no boto3; inject a fake module so retrieve tests stay hermetic."""
+    fake_mod = mock.MagicMock()
+    client = mock.MagicMock()
+    if retrieve_side_effect is not None:
+        client.retrieve.side_effect = retrieve_side_effect
+    else:
+        client.retrieve.return_value = retrieve_return or {"retrievalResults": []}
+    fake_mod.client.return_value = client
+    return mock.patch.dict(sys.modules, {"boto3": fake_mod}), fake_mod, client
+
+
 class ToolTests(unittest.TestCase):
     def test_admission_deadline_btech(self):
         result = get_admission_deadline("B.Tech")
@@ -84,18 +96,18 @@ class CampusAssistTests(unittest.TestCase):
                 }
             ]
         }
+        patcher, _mod, client = _fake_boto3_client(retrieve_return=fake)
         with mock.patch.dict(os.environ, {"KNOWLEDGE_BASE_ID": "WHR65SMI6I"}, clear=False):
-            with mock.patch("boto3.client") as client_factory:
-                client_factory.return_value.retrieve.return_value = fake
+            with patcher:
                 ctx = gather_context("What is the minimum attendance for semester exams?")
         self.assertEqual(ctx["citations"][0]["title"], "exams/exam-rules.md")
         self.assertIn("75%", ctx["citations"][0]["snippet"])
-        client_factory.return_value.retrieve.assert_called_once()
+        client.retrieve.assert_called_once()
 
     def test_keyword_fallback_when_retrieve_fails(self):
+        patcher, _mod, _client = _fake_boto3_client(retrieve_side_effect=RuntimeError("boom"))
         with mock.patch.dict(os.environ, {"KNOWLEDGE_BASE_ID": "WHR65SMI6I"}, clear=False):
-            with mock.patch("boto3.client") as client_factory:
-                client_factory.return_value.retrieve.side_effect = RuntimeError("boom")
+            with patcher:
                 ctx = gather_context("What is the minimum attendance for semester exams?")
         self.assertTrue(len(ctx["citations"]) >= 1)
         self.assertTrue(
@@ -201,9 +213,9 @@ class CampusAssistTests(unittest.TestCase):
                 },
             ]
         }
+        patcher, _mod, _client = _fake_boto3_client(retrieve_return=fake)
         with mock.patch.dict(os.environ, {"KNOWLEDGE_BASE_ID": "WHR65SMI6I"}, clear=False):
-            with mock.patch("boto3.client") as client_factory:
-                client_factory.return_value.retrieve.return_value = fake
+            with patcher:
                 ctx = placement_gather("Am I eligible for campus placement?")
         self.assertTrue(all(c["title"].startswith("placement/") for c in ctx["citations"]))
         self.assertTrue(any("6.5" in c["snippet"] for c in ctx["citations"]))
