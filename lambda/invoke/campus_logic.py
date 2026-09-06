@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sys
@@ -20,40 +21,109 @@ else:
 
 from handlers import create_ticket, get_admission_deadline, get_exam_schedule  # noqa: E402
 
-SYSTEM = """You are CampusAssist for Demo Institute of Technology.
-Answer ONLY using college knowledge (admission, exams, regulations, fees) and tool results.
-Always cite document titles when using knowledge base snippets.
-If the question is off-topic, politely refuse.
-Keep answers concise for a live demo."""
+# Primary + backup (account 390403887579 / IAM zuber, us-east-1)
+DEFAULT_BEDROCK_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+DEFAULT_BEDROCK_FALLBACK_MODEL_ID = "us.amazon.nova-lite-v1:0"
+
+# SYSTEM = """You are CampusAssist for Demo Institute of Technology.
+# Answer ONLY using college knowledge (admission, exams, regulations, fees) and tool results.
+# When toolResults or kbSnippets include amounts, dates, or table rows, quote those exact facts.
+# Do not say information is missing if it appears in the provided context.
+# Always cite document titles when using knowledge base snippets.
+# If the question is off-topic, politely refuse.
+# Keep answers concise for a live demo."""
+
+SYSTEM = """
+You are CampusAssist for Demo Institute of Technology.
+
+SCOPE: Only answer questions about admission, exams, academic regulations, fees, and student records for this college. If a question is off-topic, politely decline and redirect to a relevant topic.
+
+SOURCES OF TRUTH, IN THIS ORDER:
+1. Tool results (checkStudentRecord, raiseGrievance) — for anything about a specific student.
+2. Knowledge base snippets — for general policy, exam, admission, and fee questions.
+3. If neither source contains the answer, say: "I don't have that information — please contact the administration office." Never answer from general knowledge instead.
+
+ACCURACY RULES:
+- When a knowledge base snippet or tool result contains a specific amount, date, deadline, percentage, or table value, reproduce that value exactly as given — do not round, reword, or estimate it.
+- Do not combine or infer facts across two different documents unless both are directly relevant to the question.
+- If retrieved snippets are only partially relevant, answer only the part you can support and say what's missing.
+
+CITATION FORMAT (required every time you use a knowledge base snippet):
+- Do NOT mention document names, titles, or "according to..." anywhere inside the main answer text.
+- Only after the full answer, on a new final line, add:
+Source: <document title>
+If multiple documents were used, list them comma-separated on that same line.
+- Do not cite a document you did not actually retrieve content from.
+
+TOOL ACTIONS:
+- Before calling raiseGrievance, restate the student ID and issue back to the user in one sentence and wait for confirmation.
+- Never guess a student ID — ask for it if not provided.
+
+FORMAT FOR THIS LIVE DEMO:
+- Keep answers to 2–4 sentences plus the Source line.
+- Plain sentences, no markdown headers, no long bullet lists.
+"""
+
+LOG = logging.getLogger("campusassist.message")
+if not LOG.handlers:
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    LOG.addHandler(_handler)
+    LOG.setLevel(logging.INFO)
+    LOG.propagate = False
+
+
+def _mlog(tag: str, **fields: Any) -> None:
+    """One structured line per processing step (visible in local stdout / CloudWatch)."""
+    parts = [f"[{tag}]"]
+    for key, val in fields.items():
+        if val is None:
+            continue
+        if isinstance(val, (dict, list)):
+            text = json.dumps(val, ensure_ascii=False, default=str)
+        else:
+            text = str(val).replace("\n", " ").strip()
+        if len(text) > 240:
+            text = text[:237] + "..."
+        parts.append(f"{key}={text}")
+    LOG.info(" ".join(parts))
 
 
 def run_campus_assist(message: str, session_id: str) -> dict[str, Any]:
     message = (message or "").strip()
+    _mlog("msg", sessionId=session_id, message=message)
     if not message:
-        return {
+        out = {
             "reply": "Please ask a question about admission, exams, regulations, or fees.",
             "citations": [],
             "toolsUsed": [],
             "sessionId": session_id,
             "mode": "error",
         }
+        _mlog("out", mode=out["mode"], toolsUsed=out["toolsUsed"], citations=0)
+        return out
 
     context = gather_context(message)
+    _mlog("filter", offTopic=bool(context.get("offTopic")))
     if context.get("offTopic"):
-        return {
+        out = {
             "reply": context["refuse"],
             "citations": [],
             "toolsUsed": [],
             "sessionId": session_id,
             "mode": "off-topic",
         }
+        _mlog("out", mode=out["mode"], toolsUsed=[], citations=0, reply=out["reply"])
+        return out
 
     use_bedrock = os.environ.get("USE_BEDROCK", "").lower() == "true"
-    model_id = os.environ.get("BEDROCK_MODEL_ID", "").strip()
-    if not (use_bedrock and model_id):
-        return {
+    model_id = (
+        os.environ.get("BEDROCK_MODEL_ID", "").strip() or DEFAULT_BEDROCK_MODEL_ID
+    )
+    if not use_bedrock:
+        out = {
             "reply": (
-                "Bedrock is required. Set USE_BEDROCK=true and BEDROCK_MODEL_ID "
+                "Bedrock is required. Set USE_BEDROCK=true "
                 "(mock and hardcoded replies were removed)."
             ),
             "citations": context["citations"],
@@ -61,18 +131,28 @@ def run_campus_assist(message: str, session_id: str) -> dict[str, Any]:
             "sessionId": session_id,
             "mode": "error",
         }
+        _mlog("out", mode=out["mode"], toolsUsed=out["toolsUsed"], citations=len(out["citations"]))
+        return out
 
     try:
-        reply = bedrock_generate(message, context)
-        return {
+        reply = bedrock_generate(message, context, model_id=model_id)
+        out = {
             "reply": reply,
             "citations": context["citations"],
             "toolsUsed": context["toolsUsed"],
             "sessionId": session_id,
             "mode": "live-bedrock",
         }
+        _mlog(
+            "out",
+            mode=out["mode"],
+            toolsUsed=out["toolsUsed"],
+            citations=len(out["citations"]),
+            reply=out["reply"],
+        )
+        return out
     except Exception as exc:  # noqa: BLE001
-        return {
+        out = {
             "reply": (
                 f"Bedrock call failed: {exc}. "
                 "Enable model access in the Bedrock console if you see Operation not allowed."
@@ -83,6 +163,8 @@ def run_campus_assist(message: str, session_id: str) -> dict[str, Any]:
             "mode": "error",
             "bedrockError": str(exc),
         }
+        _mlog("out", mode=out["mode"], error=str(exc), toolsUsed=out["toolsUsed"])
+        return out
 
 
 def gather_context(message: str) -> dict[str, Any]:
@@ -109,24 +191,68 @@ def gather_context(message: str) -> dict[str, Any]:
         ticket = create_ticket("Fee clarification", message, "fees")
         tools_used.append("create_ticket")
         tool_results.append({"tool": "create_ticket", "result": ticket})
+        _mlog("tools", matched="create_ticket")
+        _mlog("tools.result", ticket_id=ticket.get("ticket_id"), category=ticket.get("category"))
 
     if any(
         k in lower
-        for k in ("last date", "deadline", "admission this year", "b.tech admission", "btech admission")
+        for k in (
+            "last date",
+            "deadline",
+            "admission this year",
+            "b.tech admission",
+            "btech admission",
+            "application closes",
+            "applications close",
+            "application close",
+            "closing date",
+            "when application",
+            "when do applications",
+            "when does application",
+        )
+    ) or (
+        "application" in lower
+        and any(k in lower for k in ("close", "closes", "closing", "closed"))
     ):
         data = get_admission_deadline("B.Tech")
         tools_used.append("get_admission_deadline")
         tool_results.append({"tool": "get_admission_deadline", "result": data})
+        _mlog("tools", matched="get_admission_deadline")
+        _mlog(
+            "tools.result",
+            last_date=data.get("last_date"),
+            opens=data.get("opens"),
+            program=data.get("program"),
+        )
 
     if any(k in lower for k in ("exam schedule", "when is mid", "timetable")):
         kind = "mid-sem" if "mid" in lower else "end-sem"
         data = get_exam_schedule(kind)
         tools_used.append("get_exam_schedule")
         tool_results.append({"tool": "get_exam_schedule", "result": data})
+        _mlog("tools", matched="get_exam_schedule", kind=kind)
+        _mlog(
+            "tools.result",
+            name=data.get("name"),
+            window_start=data.get("window_start"),
+            window_end=data.get("window_end"),
+        )
 
-    for hit in _search_kb(lower)[:3]:
+    if not tools_used:
+        _mlog("tools", matched="none")
+
+    hits = _search_kb(lower)[:3]
+    _mlog(
+        "kb",
+        root=str(KB_ROOT),
+        method="keyword_line_score",
+        topK=3,
+        hitCount=len(hits),
+    )
+    for hit in hits:
         citations.append({"title": hit["title"], "snippet": hit["snippet"]})
         kb_snippets.append({"title": hit["title"], "snippet": hit["snippet"]})
+        _mlog("kb.hit", title=hit["title"], score=hit.get("score"), snippet=hit["snippet"])
 
     uniq: list[str] = []
     for t in tools_used:
@@ -142,10 +268,25 @@ def gather_context(message: str) -> dict[str, Any]:
     }
 
 
-def bedrock_generate(message: str, context: dict[str, Any]) -> str:
+def _bedrock_model_chain(primary: str | None = None) -> list[str]:
+    """Claude Haiku primary, Nova Lite backup (deduped, env-overridable)."""
+    primary_id = (primary or os.environ.get("BEDROCK_MODEL_ID", "")).strip() or DEFAULT_BEDROCK_MODEL_ID
+    fallback_id = (
+        os.environ.get("BEDROCK_FALLBACK_MODEL_ID", "").strip()
+        or DEFAULT_BEDROCK_FALLBACK_MODEL_ID
+    )
+    chain: list[str] = []
+    for mid in (primary_id, fallback_id):
+        if mid and mid not in chain:
+            chain.append(mid)
+    return chain
+
+
+def bedrock_generate(
+    message: str, context: dict[str, Any], model_id: str | None = None
+) -> str:
     import boto3
 
-    model_id = os.environ.get("BEDROCK_MODEL_ID", "amazon.nova-lite-v1:0")
     client = boto3.client("bedrock-runtime")
     payload = {
         "toolResults": context.get("toolResults") or [],
@@ -155,14 +296,37 @@ def bedrock_generate(message: str, context: dict[str, Any]) -> str:
     user_content = (
         f"User question: {message}\n\n"
         f"Tool/KB context JSON:\n{json.dumps(payload, indent=2)}\n\n"
-        "Write the final answer for the student. Include key facts from context."
+        "Write the final answer for the student. "
+        "Use exact amounts, dates, and table values from toolResults/kbSnippets when present. "
+        "If a fee or tuition amount is in the context, state it clearly with INR."
     )
-    resp = client.converse(
-        modelId=model_id,
-        system=[{"text": SYSTEM}],
-        messages=[{"role": "user", "content": [{"text": user_content}]}],
-    )
-    return resp["output"]["message"]["content"][0]["text"]
+    chain = _bedrock_model_chain(model_id)
+    last_exc: Exception | None = None
+    for idx, mid in enumerate(chain):
+        _mlog(
+            "llm",
+            service="bedrock-runtime",
+            api="converse",
+            modelId=mid,
+            attempt=idx + 1,
+            of=len(chain),
+        )
+        try:
+            resp = client.converse(
+                modelId=mid,
+                system=[{"text": SYSTEM}],
+                messages=[{"role": "user", "content": [{"text": user_content}]}],
+                inferenceConfig={"maxTokens": 1024},
+            )
+            if idx > 0:
+                _mlog("llm.fallback", used=mid, primary=chain[0])
+            return resp["output"]["message"]["content"][0]["text"]
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            _mlog("llm.fail", modelId=mid, error=str(exc))
+            continue
+    assert last_exc is not None
+    raise last_exc
 
 
 def _off_topic(lower: str) -> bool:
@@ -170,7 +334,10 @@ def _off_topic(lower: str) -> bool:
         "attendance",
         "exam",
         "admission",
+        "application",
         "fee",
+        "tuition",
+        "tution",
         "college",
         "semester",
         "medical",
@@ -188,22 +355,103 @@ def _off_topic(lower: str) -> bool:
     return any(k in lower for k in ("poem", "mars", "joke", "song", "weather"))
 
 
+def _normalize_query(lower: str) -> str:
+    """Fix common typos before keyword search."""
+    replacements = (
+        ("tution", "tuition"),
+        ("tutions", "tuition"),
+        ("btech", "b.tech"),
+        ("semister", "semester"),
+    )
+    for src, dst in replacements:
+        lower = lower.replace(src, dst)
+    return lower
+
+
+def _kb_sections(text: str) -> list[tuple[str, list[str]]]:
+    """Split a KB doc into (heading, body_lines) sections on markdown headings.
+
+    Content before the first heading (the H1 title plus metadata lines like
+    "**Document type:**") becomes its own leading section. Splitting by section
+    instead of by single line keeps a whole list/table together in one snippet
+    instead of an arbitrary fixed-size line window cutting it off mid-list.
+    """
+    sections: list[tuple[str, list[str]]] = []
+    heading = ""
+    body: list[str] = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        if s.startswith("#"):
+            if heading or body:
+                sections.append((heading, body))
+            heading = s.lstrip("#").strip()
+            body = []
+        else:
+            body.append(s)
+    if heading or body:
+        sections.append((heading, body))
+    return sections
+
+
+def _section_score(heading: str, body: list[str], keywords: list[str]) -> int:
+    text = (heading + " " + " ".join(body)).lower()
+    score = sum(1 for k in keywords if k in text)
+    if score == 0:
+        return 0
+    # Prefer sections with concrete facts (amounts / dates) over narrative ones.
+    if any(ch.isdigit() for ch in text):
+        score += 2
+    if any(k in text for k in ("tuition", "fee", "deadline", "closes", "attendance", "%", "document")):
+        score += 1
+    # Deprioritize the metadata preamble section (institution name, doc type) —
+    # it tends to false-positive match via substrings (e.g. "tech" in "Technology").
+    if "document type" in text or "**institution:**" in text:
+        score = max(0, score - 3)
+    return score
+
+
+def _section_snippet(heading: str, body: list[str]) -> str:
+    parts = ([heading] if heading else []) + body
+    return " ".join(parts)[:600]
+
+
 def _search_kb(lower: str) -> list[dict[str, Any]]:
-    keywords = [w for w in re.split(r"\W+", lower) if len(w) > 3]
+    lower = _normalize_query(lower)
+    keywords = [w for w in re.split(r"\W+", lower) if len(w) > 2]
+    # Stem-ish expansions so typos / variants still hit KB lines
+    expanded = list(keywords)
+    for k in keywords:
+        if k.startswith("clos"):
+            expanded.extend(["close", "closes", "closing", "closed", "deadline", "last date"])
+        if k.startswith("applic"):
+            expanded.append("application")
+        if k.startswith("tuit") or k == "tution":
+            expanded.extend(["tuition", "fee", "fees", "amount"])
+        if k.startswith("fee"):
+            expanded.extend(["fee", "fees", "tuition", "amount", "inr"])
+        if k.startswith("document"):
+            expanded.extend(["document", "documents", "upload", "submit", "certificate"])
+    keywords = list(dict.fromkeys(expanded))
     if not KB_ROOT.exists():
         return []
     hits: list[dict[str, Any]] = []
     for path in KB_ROOT.rglob("*.md"):
         text = path.read_text(encoding="utf-8")
-        score = sum(1 for k in keywords if k in text.lower())
-        if score == 0:
+        sections = _kb_sections(text)
+        if not sections:
+            continue
+        best_heading, best_body, best_score = max(
+            ((h, b, _section_score(h, b, keywords)) for h, b in sections),
+            key=lambda t: t[2],
+        )
+        if best_score <= 0:
             continue
         rel = str(path.relative_to(KB_ROOT)).replace("\\", "/")
-        lines = [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.startswith("#")]
-        snippet = next(
-            (ln for ln in lines if any(k in ln.lower() for k in keywords)),
-            lines[0] if lines else "",
-        )[:220]
-        hits.append({"title": rel, "snippet": snippet, "score": score})
+        # Prefer fee policy for fee/tuition questions
+        if any(k in lower for k in ("fee", "tuition", "tution")) and rel.startswith("fees/"):
+            best_score += 5
+        hits.append({"title": rel, "snippet": _section_snippet(best_heading, best_body), "score": best_score})
     hits.sort(key=lambda h: h["score"], reverse=True)
     return hits

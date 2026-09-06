@@ -7,7 +7,9 @@ Env:
 from __future__ import annotations
 
 import json
+import logging
 import os
+import sys
 import uuid
 from typing import Any
 
@@ -17,6 +19,14 @@ CORS = {
     "Access-Control-Allow-Methods": "POST,OPTIONS",
     "Content-Type": "application/json",
 }
+
+LOG = logging.getLogger("campusassist.route")
+if not LOG.handlers:
+    _h = logging.StreamHandler(sys.stdout)
+    _h.setFormatter(logging.Formatter("%(message)s"))
+    LOG.addHandler(_h)
+    LOG.setLevel(logging.INFO)
+    LOG.propagate = False
 
 
 def handler(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
@@ -47,8 +57,19 @@ def handler(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
 
     agent_arn = (os.environ.get("AGENT_RUNTIME_ARN") or "").strip()
     if agent_arn:
+        LOG.info(
+            "[route] path=agentcore arn=%s qualifier=DEFAULT sessionId=%s message=%s",
+            agent_arn,
+            session_id,
+            message.replace("\n", " ")[:200],
+        )
         result = invoke_agentcore(message, session_id)
     else:
+        LOG.info(
+            "[route] path=in-lambda sessionId=%s message=%s",
+            session_id,
+            message.replace("\n", " ")[:200],
+        )
         from campus_logic import run_campus_assist
 
         result = run_campus_assist(message, session_id)
@@ -67,9 +88,19 @@ def invoke_agentcore(message: str, session_id: str) -> dict[str, Any]:
 
         client = boto3.client("bedrock-agentcore")
         arn = os.environ["AGENT_RUNTIME_ARN"]
+        # AgentCore requires runtimeSessionId length 33–100
+        runtime_session = session_id
+        if len(runtime_session) < 33:
+            runtime_session = f"{runtime_session}-{uuid.uuid4()}"
+        runtime_session = runtime_session[:100]
+        LOG.info(
+            "[route] invoke_agent_runtime runtimeSessionId=%s",
+            runtime_session,
+        )
         response = client.invoke_agent_runtime(
             agentRuntimeArn=arn,
-            runtimeSessionId=session_id[:100],
+            runtimeSessionId=runtime_session,
+            qualifier="DEFAULT",
             payload=json.dumps({"prompt": message, "sessionId": session_id}),
         )
         raw = response.get("response")
@@ -81,6 +112,12 @@ def invoke_agentcore(message: str, session_id: str) -> dict[str, Any]:
             parsed = json.loads(text)
             if isinstance(parsed, dict) and "reply" in parsed:
                 parsed.setdefault("sessionId", session_id)
+                LOG.info(
+                    "[route] agentcore_ok mode=%s toolsUsed=%s citations=%s",
+                    parsed.get("mode"),
+                    parsed.get("toolsUsed"),
+                    len(parsed.get("citations") or []),
+                )
                 return parsed
         except json.JSONDecodeError:
             pass
@@ -92,6 +129,7 @@ def invoke_agentcore(message: str, session_id: str) -> dict[str, Any]:
             "mode": "agentcore",
         }
     except Exception as exc:  # noqa: BLE001 — demo proxy should never 500 blankly
+        LOG.info("[route] agentcore_error error=%s", exc)
         return {
             "reply": f"AgentCore invoke failed: {exc}",
             "citations": [],

@@ -1,0 +1,21 @@
+{
+  "type": "MANAGED_KNOWLEDGE_BASE_CONNECTOR",
+  "managedKnowledgeBaseConnectorConfiguration": {
+    "mediaExtractionConfiguration": {
+      "imageExtractionConfiguration": {
+        "imageExtractionStatus": "ENABLED"
+      }
+    },
+    "connectorParameters": {
+      "type": "S3",
+      "version": "1",
+      "connectionConfiguration": {
+        "bucketName": "campusassist-kb-zubersurya-771495376060",
+        "bucketOwnerAccountId": "771495376060"
+      },
+      "deletionProtectionConfiguration": {
+        "enableDeletionProtection": false
+      }
+    }
+  }
+}

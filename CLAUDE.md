@@ -7,18 +7,19 @@ An `AGENTS.md` already exists at repo root with the canonical operating guide (s
 ## Commands
 
 ```bash
-# Run local mock chat API (Terminal 1)
+# Run local chat API (Terminal 1) — requires USE_BEDROCK=true + BEDROCK_MODEL_ID
+# (reads them from repo-root .env if present; no mock mode exists anymore)
 python scripts/local_api.py
 
 # Run UI dev server (Terminal 2)
 cd ui && npm install && npm run dev
-# -> http://127.0.0.1:5173, Vite proxies /chat to the mock API
+# -> http://127.0.0.1:5173, Vite proxies /chat to the local API
 
 # Full unit suite
 python -m unittest discover -s lambda/tests -v
 
 # Single test
-python -m unittest lambda.tests.test_tools.ToolTests.test_admission_deadline_btech
+python -m unittest lambda.tests.test_tools.CampusAssistTests.test_off_topic
 
 # UI build / preview
 cd ui && npm run build
@@ -35,23 +36,24 @@ There is no lint config in this repo (no ruff/eslint config files) — don't ass
 
 ## Architecture
 
-Request path: browser UI -> API Gateway (`infra/template.yaml`, `HttpApi` + `/chat`) -> `lambda/invoke/handler.py` -> either local mock logic or Bedrock AgentCore Runtime (`bedrock-agentcore.invoke_agent_runtime`) -> `agent/main.py` entrypoint -> Bedrock Converse + KB + tool Lambdas.
+Request path: browser UI -> API Gateway (`infra/template.yaml`, `HttpApi` + `/chat`) -> `lambda/invoke/handler.py`, which routes on whether `AGENT_RUNTIME_ARN` is set:
+- **Set** -> `invoke_agentcore()` calls `bedrock-agentcore.invoke_agent_runtime` against the deployed AgentCore Runtime (`agent/main.py` entrypoint). Not currently deployed in prod, so this branch is dead in the live stack today but is what `agent/main.py`'s AgentCore Runtime path is for.
+- **Unset (current live path)** -> imports `campus_logic.run_campus_assist` and runs entirely in the invoke Lambda's own process.
 
-Response contract everywhere is `{ reply, citations, toolsUsed, sessionId }` — enforced by both `lambda/invoke/handler.py` and `agent/campus_logic.py`.
+There is no mock mode anymore (`mock_chat` was removed) — `run_campus_assist` always requires `USE_BEDROCK=true` and calls Bedrock Converse with primary `us.anthropic.claude-haiku-4-5-20251001-v1:0` and backup `us.amazon.nova-lite-v1:0`. If both fail, the raw exception text becomes the `reply`. Every response carries a `mode` field: `off-topic`, `error`, `live-bedrock`, or `agentcore`.
 
-**Two independent implementations of the same chat brain exist and must be kept in sync by hand:**
-- `lambda/invoke/handler.py::mock_chat` / `_search_kb` — used when `MOCK_MODE=true` or no `AGENT_RUNTIME_ARN` is set (the API Gateway path never reaches AgentCore in this case).
-- `agent/campus_logic.py::run_campus_assist` / `gather_context` — used by the actual AgentCore runtime entrypoint (`agent/main.py`), and optionally calls Bedrock Converse (`bedrock_generate`) when `USE_BEDROCK=true` and `BEDROCK_MODEL_ID` is set.
+Response contract: `{ reply, citations, toolsUsed, sessionId, mode }`.
 
-Both re-implement the same off-topic filter, keyword-based KB search over `docs/kb/**/*.md`, and tool-triggering keyword lists. When changing chat behavior (new keywords, new answer text, new off-topic rules), update both files or they will silently diverge. `lambda/invoke/handler.py` also has a `_builtin_hits` fallback used only if `docs/kb` isn't packaged alongside the Lambda.
+**Three sets of files are duplicated on disk and must be kept in sync by hand** — SAM's `CodeUri` for `InvokeFunction` is `lambda/invoke/`, so anything that Lambda imports or reads at runtime has to physically live inside that directory; there is no build/bundle step that copies files in for you:
+- `agent/campus_logic.py` == `lambda/invoke/campus_logic.py` (same file, byte-for-byte) — `agent/` is the AgentCore Runtime copy, `lambda/invoke/` is the packaging copy the live Lambda actually imports.
+- `lambda/tools/handlers.py` == `lambda/invoke/handlers.py` — tool logic (`get_admission_deadline`, `get_exam_schedule`, `create_ticket`). Tests import from `lambda/tools/handlers.py`.
+- `docs/kb/**/*.md` == `lambda/invoke/kb/**/*.md` — the knowledge base. `campus_logic._search_kb` is a keyword match over these markdown files at request time; this is not a real Bedrock Managed Knowledge Base / vector store, despite `DocsBucket` existing in S3 for it.
 
-**Tool handlers are duplicated too**: `lambda/tools/handlers.py` and `lambda/invoke/handlers.py` (plural, sibling of `handler.py` singular) are byte-for-byte identical copies of `get_admission_deadline`, `get_exam_schedule`, `create_ticket`, and the `handler_*` Lambda wrappers. `lambda/invoke/handler.py` imports from whichever resolves first (`handlers` then falls back to `tools.handlers`) depending on how the Lambda is packaged/zipped. `agent/campus_logic.py` always imports from `lambda/tools/handlers.py` directly (via `sys.path` manipulation in `agent/main.py`). Tests (`lambda/tests/test_tools.py`) import from `lambda/tools/handlers.py`. If you change tool logic, change `lambda/tools/handlers.py` and mirror it into `lambda/invoke/handlers.py`.
-
-Infra (`infra/template.yaml`, SAM): defines `InvokeFunction` (the `/chat` API), three standalone tool Lambdas (`AdmissionDeadlineFunction`, `ExamScheduleFunction`, `CreateTicketFunction` — these exist as separate deployable functions but are not currently wired to anything invoking them over the network; the invoke path calls the Python functions in-process instead), and a private `DocsBucket` for KB docs. CloudFront/S3 UI hosting is deferred (see git history / `.planning/`) — UI is currently run locally against the API Gateway endpoint via `VITE_API_URL`.
+Infra (`infra/template.yaml`, SAM): `InvokeFunction` (the `/chat` API, env vars `AGENT_RUNTIME_ARN`, `USE_BEDROCK`, `BEDROCK_MODEL_ID`, `BEDROCK_FALLBACK_MODEL_ID`, includes an `aws-marketplace:Subscribe/Unsubscribe/ViewSubscriptions` IAM statement because Nova Lite is Marketplace-listed), three standalone tool Lambdas (`AdmissionDeadlineFunction`, `ExamScheduleFunction`, `CreateTicketFunction` — deployed but not wired to anything over the network; the invoke path calls the Python functions in-process instead), a private `DocsBucket`, and a public `UiBucket` (S3 static website hosting — the HTTP fallback added because CloudFront distribution creation is blocked pending AWS account verification). Target account: `390403887579` (IAM `zuber`).
 
 AgentCore deploy is direct-code (no Docker), driven by `agent/agentcore.yaml` + `agentcore deploy` run from `agent/`.
 
-`.planning/` contains phase-by-phase deployment notes (OIDC, IAM access keys, SAM parameter overrides) — check there for why specific infra/CI choices were made before changing `infra/template.yaml` or `.github/workflows/`.
+`.planning/` contains phase-by-phase deployment notes and the current as-built state (`.planning/12-REQUIREMENTS.md` has the full AWS-services-used breakdown) — check there for why specific infra/CI choices were made before changing `infra/template.yaml` or `.github/workflows/`.
 
 ## AWS Guidance
 

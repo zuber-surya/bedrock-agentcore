@@ -14,8 +14,24 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lambda" / "tools"))
 sys.path.insert(0, str(ROOT / "lambda" / "invoke"))
 
+
+def _load_dotenv(path: Path) -> None:
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key, val = key.strip(), val.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = val
+
+
+_load_dotenv(ROOT / ".env")
 os.environ.setdefault("USE_BEDROCK", "true")
-os.environ.setdefault("BEDROCK_MODEL_ID", "us.amazon.nova-lite-v1:0")
+os.environ.setdefault("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
+os.environ.setdefault("BEDROCK_FALLBACK_MODEL_ID", "us.amazon.nova-lite-v1:0")
 os.environ.pop("MOCK_MODE", None)
 
 from handler import handler  # noqa: E402

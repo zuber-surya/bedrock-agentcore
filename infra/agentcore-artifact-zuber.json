@@ -1,0 +1,1 @@
+{"codeConfiguration":{"code":{"s3":{"bucket":"campusassist-kb-zuber-390403887579","prefix":"agentcore/campusassist-agent.zip"}},"runtime":"PYTHON_3_12","entryPoint":["main.py"]}}

@@ -1,0 +1,6 @@
+{
+  "type": "MANAGED",
+  "managedKnowledgeBaseConfiguration": {
+    "embeddingModelType": "MANAGED"
+  }
+}

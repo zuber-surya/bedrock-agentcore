@@ -1,0 +1,8 @@
+{
+  "text": "What is the minimum attendance for semester exams?",
+  "retrievalConfiguration": {
+    "managedSearchConfiguration": {
+      "numberOfResults": 3
+    }
+  }
+}

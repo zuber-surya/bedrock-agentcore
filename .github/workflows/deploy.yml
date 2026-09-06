@@ -49,7 +49,7 @@ jobs:
             echo "Set repository variable DOCS_BUCKET (globally unique S3 name)"
             exit 1
           fi
-          OVERRIDES="ProjectName=campusassist UseBedrock=${{ vars.USE_BEDROCK || 'true' }} BedrockModelId=${{ vars.BEDROCK_MODEL_ID || 'us.amazon.nova-lite-v1:0' }} DocsBucketName=$DOCS_BUCKET"
+          OVERRIDES="ProjectName=campusassist UseBedrock=${{ vars.USE_BEDROCK || 'true' }} BedrockModelId=${{ vars.BEDROCK_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0' }} BedrockFallbackModelId=${{ vars.BEDROCK_FALLBACK_MODEL_ID || 'us.amazon.nova-lite-v1:0' }} DocsBucketName=$DOCS_BUCKET"
           if [ -n "${{ vars.AGENT_RUNTIME_ARN }}" ]; then
             OVERRIDES="$OVERRIDES AgentRuntimeArn=${{ vars.AGENT_RUNTIME_ARN }}"
           fi

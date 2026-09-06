@@ -14,16 +14,16 @@ This repo is a college FAQ chatbot demo built around Amazon Bedrock, managed kno
 
 ## Architecture and conventions
 
-- The app is intentionally simple and demo-oriented: browser UI -> API Gateway / Lambda -> mock or AgentCore runtime -> Bedrock + Managed KB + tool Lambdas.
+- The app is intentionally simple and demo-oriented: browser UI -> API Gateway / Lambda -> `campus_logic.run_campus_assist` (in-Lambda) or AgentCore Runtime (once `AGENT_RUNTIME_ARN` is set) -> Bedrock + KB keyword search + tool functions.
 - Keep the solution within the existing AWS pattern described in [README.md](README.md): no Docker, no OpenSearch Serverless, no EC2.
 - Prefer small, deterministic tool functions and KB-backed answers over custom orchestration complexity.
-- Local mock mode is the default when `MOCK_MODE=true` or no `AGENT_RUNTIME_ARN` is set; do not assume AWS is always available.
-- The runtime contract for chat responses is JSON with `reply`, `citations`, `toolsUsed`, and `sessionId`.
+- There is no mock mode — Bedrock is required (`USE_BEDROCK=true` + `BEDROCK_MODEL_ID`). If the Bedrock call fails, the raw error becomes the reply; do not reintroduce a hardcoded/grounded fallback without discussing it, since removing that was a deliberate decision (see git history, "Remove mock chat and hardcoded FAQ replies; require Bedrock").
+- The runtime contract for chat responses is JSON with `reply`, `citations`, `toolsUsed`, `sessionId`, and `mode` (`off-topic` / `error` / `live-bedrock` / `agentcore`).
 
 ## Local development
 
 ```bash
-# Terminal 1 — mock chat API
+# Terminal 1 — chat API (needs USE_BEDROCK=true + BEDROCK_MODEL_ID, e.g. via .env)
 python scripts/local_api.py
 
 # Terminal 2 — UI
@@ -32,7 +32,7 @@ npm install
 npm run dev
 ```
 
-Then open http://127.0.0.1:5173. The UI expects the mock chat API and proxies `/chat` requests during local development.
+Then open http://127.0.0.1:5173. The UI proxies `/chat` requests to the local API during local development.
 
 ## Tests
 
@@ -44,15 +44,18 @@ The unit suite in [lambda/tests/test_tools.py](lambda/tests/test_tools.py) cover
 
 - tool behavior for admission deadlines, exam schedules, and ticket creation
 - Lambda wrapper responses
-- mock chat flows for valid answers, off-topic filtering, and tool usage
+- `campus_logic.gather_context` / `run_campus_assist`: off-topic filtering, tool triggering, KB citation matching, and the Bedrock-required error path
 
 When changing chat logic or tool outputs, update or extend the relevant tests in that file instead of adding unrelated test scaffolding.
 
 ## Repo-specific guidance
 
-- Knowledge base content belongs under [docs/kb](docs/kb); update those markdown files before hardcoding new FAQ answers elsewhere.
-- Tool handlers in [lambda/tools/handlers.py](lambda/tools/handlers.py) should remain stable and serializable for simple Lambda usage.
-- The AgentCore deployment path is via [agent/agentcore.yaml](agent/agentcore.yaml) and `agentcore deploy` from the [agent](agent) directory.
+- Knowledge base content belongs under [docs/kb](docs/kb); update those markdown files before hardcoding new FAQ answers elsewhere. **Also copy the same change into `lambda/invoke/kb/`** — that's the mirror the deployed Lambda actually reads (SAM packages `lambda/invoke/` only, no build step syncs it for you).
+- Tool handlers in [lambda/tools/handlers.py](lambda/tools/handlers.py) should remain stable and serializable for simple Lambda usage. Mirror any change into `lambda/invoke/handlers.py` (identical duplicate, same packaging reason as above).
+- Chat logic lives in `agent/campus_logic.py`, mirrored byte-for-byte at `lambda/invoke/campus_logic.py` — change one, copy into the other.
+- Target AWS account: `390403887579` (IAM user `zuber`), region `us-east-1`. See [.planning/15-ZUBER-DEPLOY.md](.planning/15-ZUBER-DEPLOY.md).
+- LLM: primary `us.anthropic.claude-haiku-4-5-20251001-v1:0`, backup `us.amazon.nova-lite-v1:0` (`BEDROCK_FALLBACK_MODEL_ID`).
+- The AgentCore deployment path is via [agent/agentcore.yaml](agent/agentcore.yaml) and `agentcore deploy` from the [agent](agent) directory. On the zuber account, Invoke Lambda has `AGENT_RUNTIME_ARN` set to the deployed runtime.
 - Deployment details and env variables are documented in [README.md](README.md); follow that source of truth rather than inventing new infrastructure patterns.
 - The app is demo-grade; prioritize correctness and repo clarity over broad abstraction or framework churn.
 

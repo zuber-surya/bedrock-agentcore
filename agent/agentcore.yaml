@@ -1,11 +1,11 @@
 # AgentCore direct code deploy — no Docker.
-# Package with AgentCore CLI when available, e.g.:
-#   agentcore deploy --code . --name campusassist-agent
+# Deploy with AgentCore CLI (@aws/agentcore), e.g.:
+#   agentcore deploy  (from agent/ after configure)
 name: campusassist-agent
 entrypoint: main.py
 runtime: python3.12
 deployment: direct_code
 environment:
-  USE_BEDROCK: "false"
-  # Set true + BEDROCK_MODEL_ID after model access is enabled
-  # BEDROCK_MODEL_ID: amazon.nova-lite-v1:0
+  USE_BEDROCK: "true"
+  BEDROCK_MODEL_ID: "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+  BEDROCK_FALLBACK_MODEL_ID: "us.amazon.nova-lite-v1:0"

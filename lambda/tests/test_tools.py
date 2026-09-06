@@ -65,6 +65,26 @@ class CampusAssistTests(unittest.TestCase):
         self.assertIn("get_admission_deadline", ctx["toolsUsed"])
         self.assertEqual(ctx["toolResults"][0]["result"]["last_date"], "2026-06-30")
 
+    def test_gather_application_closes_question(self):
+        ctx = gather_context("when application closes?")
+        self.assertIn("get_admission_deadline", ctx["toolsUsed"])
+        self.assertEqual(ctx["toolResults"][0]["result"]["last_date"], "2026-06-30")
+        self.assertTrue(
+            any(
+                "30 June" in c["snippet"] or "closes" in c["snippet"].lower() or "Last date" in c["snippet"]
+                for c in ctx["citations"]
+            ),
+            msg=f"citations={ctx['citations']}",
+        )
+
+    def test_gather_tuition_typo_question(self):
+        ctx = gather_context("what is the tution fees for B.Tech")
+        self.assertTrue(any(c["title"].startswith("fees/") for c in ctx["citations"]), msg=ctx["citations"])
+        self.assertTrue(
+            any("75,000" in c["snippet"] or "Tuition" in c["snippet"] for c in ctx["citations"]),
+            msg=f"citations={ctx['citations']}",
+        )
+
     def test_gather_ticket_tool(self):
         ctx = gather_context("Raise a support ticket for fee clarification")
         self.assertIn("create_ticket", ctx["toolsUsed"])
@@ -77,7 +97,7 @@ class CampusAssistTests(unittest.TestCase):
         self.assertEqual(out["toolsUsed"], [])
 
     def test_requires_bedrock_config(self):
-        with mock.patch.dict(os.environ, {"USE_BEDROCK": "false", "BEDROCK_MODEL_ID": ""}, clear=False):
+        with mock.patch.dict(os.environ, {"USE_BEDROCK": "false"}, clear=False):
             out = run_campus_assist("What is the minimum attendance for semester exams?", "s1")
         self.assertEqual(out["mode"], "error")
         self.assertIn("Bedrock is required", out["reply"])
@@ -85,7 +105,7 @@ class CampusAssistTests(unittest.TestCase):
     def test_handler_routes_to_campus_logic(self):
         with mock.patch.dict(
             os.environ,
-            {"AGENT_RUNTIME_ARN": "", "USE_BEDROCK": "false", "BEDROCK_MODEL_ID": ""},
+            {"AGENT_RUNTIME_ARN": "", "USE_BEDROCK": "false"},
             clear=False,
         ):
             result = invoke_mod.handler(
