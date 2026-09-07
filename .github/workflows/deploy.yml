@@ -85,6 +85,7 @@ jobs:
 
       - name: Seed students DynamoDB table
         run: |
+          pip install boto3
           TABLE=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
             --query "Stacks[0].Outputs[?OutputKey=='StudentsTableName'].OutputValue" --output text)
           if [ -z "$TABLE" ] || [ "$TABLE" = "None" ]; then
