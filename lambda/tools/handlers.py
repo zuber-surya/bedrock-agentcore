@@ -253,3 +253,13 @@ def _payload(event: dict[str, Any]) -> dict[str, Any]:
     if isinstance(body, dict):
         return body
     return event.get("arguments") or event.get("input") or {}
+
+
+# Student record tool (DynamoDB / in-memory) — used by campus + placement agents
+from students import (  # noqa: E402
+    check_student_record,
+    evaluate_placement_eligibility,
+    extract_student_id,
+    seed_students,
+    wants_student_record,
+)

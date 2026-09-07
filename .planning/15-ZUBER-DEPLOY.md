@@ -17,6 +17,7 @@ Date: 2026-09-06
 | Nova | AUTHORIZED (live-bedrock works) |
 | Managed KB (legacy unused) | `campusassist-kb` / `5OEIVJG5VE` |
 | S3 Vectors KB (live Retrieve) | `campusassist-kb-s3vectors` / `WHR65SMI6I` |
+| Students table (DynamoDB) | `campusassist-students` (demo IDs `S1-001`…`S1-006`) |
 | S3 Vectors index | `campusassist-kb-vectors-zuber` / `campusassist-kb-index` |
 | Data source | `BHYJWSVBYJ` — ingest COMPLETE (9 docs) |
 | AgentCore runtime | `campusassistagent-4AErABEsnY` **READY** |

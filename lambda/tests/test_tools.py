@@ -26,6 +26,8 @@ spec.loader.exec_module(invoke_mod)
 
 from campus_logic import gather_context, run_campus_assist  # noqa: E402
 from placement_logic import gather_context as placement_gather  # noqa: E402
+from placement_logic import run_placement_assist  # noqa: E402
+from students import check_student_record, evaluate_placement_eligibility  # noqa: E402
 
 
 def _fake_boto3_client(retrieve_return=None, retrieve_side_effect=None):
@@ -38,6 +40,47 @@ def _fake_boto3_client(retrieve_return=None, retrieve_side_effect=None):
         client.retrieve.return_value = retrieve_return or {"retrievalResults": []}
     fake_mod.client.return_value = client
     return mock.patch.dict(sys.modules, {"boto3": fake_mod}), fake_mod, client
+
+
+class StudentRecordTests(unittest.TestCase):
+    def test_eligible_student(self):
+        with mock.patch.dict(os.environ, {"STUDENTS_TABLE": ""}, clear=False):
+            rec = check_student_record("S1-001")
+        self.assertTrue(rec["found"])
+        self.assertTrue(rec["placementEligibility"]["eligible"])
+
+    def test_low_attendance_not_eligible(self):
+        with mock.patch.dict(os.environ, {"STUDENTS_TABLE": ""}, clear=False):
+            rec = check_student_record("S1-004")
+        self.assertTrue(rec["found"])
+        self.assertFalse(rec["placementEligibility"]["eligible"])
+        self.assertTrue(
+            any("attendance" in r.lower() for r in rec["placementEligibility"]["reasons"])
+        )
+
+    def test_unknown_id(self):
+        with mock.patch.dict(os.environ, {"STUDENTS_TABLE": ""}, clear=False):
+            rec = check_student_record("S1-999")
+        self.assertFalse(rec["found"])
+
+    def test_placement_asks_for_id(self):
+        with mock.patch.dict(os.environ, {"KNOWLEDGE_BASE_ID": "", "STUDENTS_TABLE": ""}, clear=False):
+            out = run_placement_assist("Am I eligible for campus placement?", "s1")
+        self.assertIn("S1-001", out["reply"])
+        self.assertEqual(out["toolsUsed"], [])
+
+    def test_placement_lookup_with_id(self):
+        with mock.patch.dict(os.environ, {"KNOWLEDGE_BASE_ID": "", "STUDENTS_TABLE": ""}, clear=False):
+            ctx = placement_gather("Am I eligible for campus placement? My ID is S1-001")
+        self.assertIn("check_student_record", ctx["toolsUsed"])
+        self.assertTrue(ctx["toolResults"][0]["result"]["found"])
+        self.assertTrue(ctx["toolResults"][0]["result"]["placementEligibility"]["eligible"])
+
+    def test_campus_attendance_with_id(self):
+        with mock.patch.dict(os.environ, {"KNOWLEDGE_BASE_ID": "", "STUDENTS_TABLE": ""}, clear=False):
+            ctx = gather_context("What is my attendance? Student ID S1-001")
+        self.assertIn("check_student_record", ctx["toolsUsed"])
+        self.assertEqual(ctx["toolResults"][0]["result"]["student"]["attendancePct"], 82)
 
 
 class ToolTests(unittest.TestCase):
@@ -180,7 +223,8 @@ class CampusAssistTests(unittest.TestCase):
 
     def test_placement_kb_eligibility(self):
         with mock.patch.dict(os.environ, {"KNOWLEDGE_BASE_ID": ""}, clear=False):
-            ctx = placement_gather("Am I eligible for campus placement?")
+            ctx = placement_gather("What are the campus placement eligibility rules and CGPA cutoff?")
+        self.assertFalse(ctx.get("needsStudentId"))
         self.assertFalse(ctx["offTopic"])
         self.assertTrue(any(c["title"].startswith("placement/") for c in ctx["citations"]))
         self.assertTrue(
@@ -216,10 +260,11 @@ class CampusAssistTests(unittest.TestCase):
         patcher, _mod, _client = _fake_boto3_client(retrieve_return=fake)
         with mock.patch.dict(os.environ, {"KNOWLEDGE_BASE_ID": "WHR65SMI6I"}, clear=False):
             with patcher:
-                ctx = placement_gather("Am I eligible for campus placement?")
+                ctx = placement_gather("What CGPA is required for campus placement?")
         self.assertTrue(all(c["title"].startswith("placement/") for c in ctx["citations"]))
         self.assertTrue(any("6.5" in c["snippet"] for c in ctx["citations"]))
         self.assertFalse(any("75000" in c["snippet"] for c in ctx["citations"]))
+        self.assertFalse(ctx.get("needsStudentId"))
 
     def test_handler_routes_placement_question(self):
         with mock.patch.dict(
@@ -228,6 +273,8 @@ class CampusAssistTests(unittest.TestCase):
                 "AGENT_RUNTIME_ARN": "",
                 "AGENT_RUNTIME_ARN_PLACEMENT": "",
                 "USE_BEDROCK": "false",
+                "KNOWLEDGE_BASE_ID": "",
+                "STUDENTS_TABLE": "",
             },
             clear=False,
         ):
@@ -241,7 +288,8 @@ class CampusAssistTests(unittest.TestCase):
         self.assertEqual(result["statusCode"], 200)
         body = __import__("json").loads(result["body"])
         self.assertEqual(body.get("agent"), "placement")
-        self.assertEqual(body["mode"], "error")  # Bedrock disabled in test
+        # No student ID yet — agent asks for S1-00x before Bedrock
+        self.assertIn("S1-001", body["reply"])
 
 
 def json_body(message: str) -> str:

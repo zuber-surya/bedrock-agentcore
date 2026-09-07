@@ -30,12 +30,14 @@ SCOPE: Only answer questions about campus placement, drives, eligibility, intern
 If the question is about admission, exams, fees, or general academics, politely say to ask CampusAssist instead.
 
 SOURCES OF TRUTH:
-1. Knowledge base snippets from the placement docs.
-2. If the snippets do not contain the answer, say you do not have that information and suggest contacting placement@demo-college.edu.
-   Never invent company lists, drive dates, CGPA cutoffs, or contact details.
+1. Tool results from check_student_record (student CGPA, attendance, arrears, results, eligibility) when a student ID is provided.
+2. Knowledge base snippets from the placement docs (policy text).
+3. If neither source contains the answer, say you do not have that information and suggest contacting placement@demo-college.edu.
+   Never invent company lists, drive dates, CGPA cutoffs, contact details, or student facts.
 
 ACCURACY:
-- Quote exact CGPA, percentages, arrears rules, windows, phone/email, and company names from the snippets.
+- Quote exact CGPA, percentages, arrears rules, windows, phone/email, and company names from the snippets or tool results.
+- For a specific student, use check_student_record / placementEligibility only — do not invent eligible/not.
 - Do not invent drives, companies, sectors, or columns that are not in the snippets.
 - Prefer the snippet's own wording for lists (keep company names as written).
 
@@ -108,6 +110,18 @@ def run_placement_assist(message: str, session_id: str) -> dict[str, Any]:
         _mlog("out", mode=out["mode"], reply=out["reply"])
         return out
 
+    if context.get("needsStudentId"):
+        out = {
+            "reply": context["askStudentId"],
+            "citations": context.get("citations") or [],
+            "toolsUsed": [],
+            "sessionId": session_id,
+            "mode": "live-bedrock",
+            "agent": "placement",
+        }
+        _mlog("out", mode=out["mode"], needsStudentId=True)
+        return out
+
     use_bedrock = os.environ.get("USE_BEDROCK", "").lower() == "true"
     model_id = os.environ.get("BEDROCK_MODEL_ID", "").strip() or DEFAULT_BEDROCK_MODEL_ID
     if not use_bedrock:
@@ -126,7 +140,7 @@ def run_placement_assist(message: str, session_id: str) -> dict[str, Any]:
         out = {
             "reply": reply,
             "citations": context["citations"],
-            "toolsUsed": [],
+            "toolsUsed": context.get("toolsUsed") or [],
             "sessionId": session_id,
             "mode": "live-bedrock",
             "agent": "placement",
@@ -153,6 +167,12 @@ def run_placement_assist(message: str, session_id: str) -> dict[str, Any]:
 
 
 def gather_context(message: str) -> dict[str, Any]:
+    from students import (
+        check_student_record,
+        extract_student_id,
+        wants_student_record,
+    )
+
     lower = message.lower()
     if _off_topic(lower):
         return {
@@ -166,6 +186,35 @@ def gather_context(message: str) -> dict[str, Any]:
             "toolResults": [],
             "kbSnippets": [],
         }
+
+    tools_used: list[str] = []
+    tool_results: list[dict[str, Any]] = []
+
+    if wants_student_record(message):
+        sid = extract_student_id(message)
+        if not sid:
+            return {
+                "offTopic": False,
+                "needsStudentId": True,
+                "askStudentId": (
+                    "Please share your student ID (demo format **S1-001** … **S1-006**) "
+                    "so I can check your placement eligibility and record."
+                ),
+                "citations": [],
+                "toolsUsed": [],
+                "toolResults": [],
+                "kbSnippets": [],
+            }
+        record = check_student_record(sid)
+        tools_used.append("check_student_record")
+        tool_results.append({"tool": "check_student_record", "result": record})
+        _mlog(
+            "tools",
+            matched="check_student_record",
+            studentId=sid,
+            found=record.get("found"),
+            eligible=(record.get("placementEligibility") or {}).get("eligible"),
+        )
 
     hits_raw = _retrieve_kb(message, uri_contains="placement/")
     if hits_raw is not None:
@@ -191,8 +240,8 @@ def gather_context(message: str) -> dict[str, Any]:
     return {
         "offTopic": False,
         "citations": citations,
-        "toolsUsed": [],
-        "toolResults": [],
+        "toolsUsed": tools_used,
+        "toolResults": tool_results,
         "kbSnippets": kb_snippets,
     }
 
@@ -224,7 +273,10 @@ def bedrock_generate(
     user_content = (
         f"User question: {message}\n\n"
         f"Placement KB context JSON:\n{json.dumps(payload, indent=2)}\n\n"
-        "Write the final answer for the student using only exact values from the snippets.\n"
+        "Write the final answer for the student using only exact values from toolResults "
+        "and kbSnippets.\n"
+        "If check_student_record is present, state eligibility using placementEligibility "
+        "and quote student CGPA/attendance/arrears from the tool — do not invent them.\n"
         "Do not invent companies, sectors, or dates. Use valid pipe-table markdown "
         "(blank line before table; header; | --- | --- |; body rows) or bullets."
     )

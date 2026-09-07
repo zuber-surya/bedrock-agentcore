@@ -197,11 +197,20 @@ body {
   border: 1px solid #f0b4b4;
 }
 
-.meta {
-  margin-top: 0.65rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
+.student-id-hint {
+  font-size: 0.82rem;
+  color: #3a4a4f;
+  margin: 0 0 0.35rem;
+}
+
+.student-id-hint .linkish {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--brand);
+  cursor: pointer;
+  text-decoration: underline;
+  font: inherit;
 }
 
 .citation {

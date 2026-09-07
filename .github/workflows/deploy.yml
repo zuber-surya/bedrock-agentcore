@@ -83,6 +83,15 @@ jobs:
         run: |
           aws s3 sync docs/kb "s3://${DOCS_BUCKET}/kb/" --delete
 
+      - name: Seed students DynamoDB table
+        run: |
+          TABLE=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='StudentsTableName'].OutputValue" --output text)
+          if [ -z "$TABLE" ] || [ "$TABLE" = "None" ]; then
+            TABLE="campusassist-students"
+          fi
+          STUDENTS_TABLE="$TABLE" python scripts/seed_students.py --table "$TABLE" --region "$AWS_REGION"
+
       - name: Start KB ingestion (S3 Vectors)
         env:
           KNOWLEDGE_BASE_ID: ${{ vars.KNOWLEDGE_BASE_ID || 'WHR65SMI6I' }}

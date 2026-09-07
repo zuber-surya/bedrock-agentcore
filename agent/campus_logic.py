@@ -20,6 +20,11 @@ else:
     KB_ROOT = HERE.parents[1] / "docs" / "kb"
 
 from handlers import create_ticket, get_admission_deadline, get_exam_schedule  # noqa: E402
+from students import (  # noqa: E402
+    check_student_record,
+    extract_student_id,
+    wants_student_record,
+)
 
 # Primary + backup (account 390403887579 / IAM zuber, us-east-1)
 DEFAULT_BEDROCK_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
@@ -39,12 +44,13 @@ You are CampusAssist for Demo Institute of Technology.
 SCOPE: Only answer questions about admission, exams, academic regulations, fees, and student records for this college. If a question is off-topic, politely decline and redirect to a relevant topic.
 
 SOURCES OF TRUTH, IN THIS ORDER:
-1. Tool results (checkStudentRecord, raiseGrievance) — for anything about a specific student.
+1. Tool results (check_student_record, create_ticket, get_admission_deadline, get_exam_schedule) — for anything about a specific student or live tool facts.
 2. Knowledge base snippets — for general policy, exam, admission, and fee questions.
 3. If neither source contains the answer, say: "I don't have that information — please contact the administration office." Never answer from general knowledge instead.
 
 ACCURACY RULES:
 - When a knowledge base snippet or tool result contains a specific amount, date, deadline, percentage, or table value, reproduce that value exactly as given — do not round, reword, or estimate it.
+- For a specific student, use check_student_record only — never invent CGPA, attendance, or results.
 - Do not combine or infer facts across two different documents unless both are directly relevant to the question.
 - If retrieved snippets are only partially relevant, answer only the part you can support and say what's missing.
 
@@ -56,8 +62,8 @@ If multiple documents were used, list them comma-separated on that same line.
 - Do not cite a document you did not actually retrieve content from.
 
 TOOL ACTIONS:
-- Before calling raiseGrievance, restate the student ID and issue back to the user in one sentence and wait for confirmation.
-- Never guess a student ID — ask for it if not provided.
+- Never guess a student ID — ask for it (demo IDs S1-001 … S1-006) if not provided.
+- Before creating a support ticket, restate the issue briefly when helpful.
 
 FORMAT FOR THIS LIVE DEMO:
 - Prefer short, scannable answers (a short heading, bullets, or a small table when useful).
@@ -122,6 +128,17 @@ def run_campus_assist(message: str, session_id: str) -> dict[str, Any]:
             "mode": "off-topic",
         }
         _mlog("out", mode=out["mode"], toolsUsed=[], citations=0, reply=out["reply"])
+        return out
+
+    if context.get("needsStudentId"):
+        out = {
+            "reply": context["askStudentId"],
+            "citations": context.get("citations") or [],
+            "toolsUsed": [],
+            "sessionId": session_id,
+            "mode": "live-bedrock",
+        }
+        _mlog("out", mode=out["mode"], needsStudentId=True)
         return out
 
     use_bedrock = os.environ.get("USE_BEDROCK", "").lower() == "true"
@@ -201,6 +218,34 @@ def gather_context(message: str) -> dict[str, Any]:
         tool_results.append({"tool": "create_ticket", "result": ticket})
         _mlog("tools", matched="create_ticket")
         _mlog("tools.result", ticket_id=ticket.get("ticket_id"), category=ticket.get("category"))
+
+    # Student record: attendance / results / CGPA (placement eligibility routes to placement agent)
+    if wants_student_record(message) and not any(
+        k in lower for k in ("placement", "campus drive", "eligible for campus")
+    ):
+        sid = extract_student_id(message)
+        if not sid:
+            return {
+                "offTopic": False,
+                "needsStudentId": True,
+                "askStudentId": (
+                    "Please share your student ID (demo format **S1-001** … **S1-006**) "
+                    "so I can look up your attendance or academic results."
+                ),
+                "citations": [],
+                "toolsUsed": [],
+                "toolResults": [],
+                "kbSnippets": [],
+            }
+        record = check_student_record(sid)
+        tools_used.append("check_student_record")
+        tool_results.append({"tool": "check_student_record", "result": record})
+        _mlog(
+            "tools",
+            matched="check_student_record",
+            studentId=sid,
+            found=record.get("found"),
+        )
 
     if any(
         k in lower

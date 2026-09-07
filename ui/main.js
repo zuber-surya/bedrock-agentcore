@@ -2,12 +2,14 @@ const PROMPTS = [
   "What is the minimum attendance for semester exams?",
   "Can I get medical leave for a missed mid-sem?",
   "Last date for B.Tech admission this year?",
-  "What documents are required for admission?",
-  "Raise a support ticket for fee clarification",
-  "Am I eligible for campus placement?",
+  "Am I eligible for campus placement? My ID is S1-001",
+  "Am I eligible for campus placement? My ID is S1-004",
+  "What is my attendance? Student ID S1-001",
 ];
 
 const API_URL = import.meta.env.VITE_API_URL || "/chat";
+const STUDENT_ID_KEY = "campusassist_student_id";
+const STUDENT_ID_RE = /\b(S1-\d{3})\b/i;
 
 const chipsEl = document.getElementById("chips");
 const threadEl = document.getElementById("thread");
@@ -23,6 +25,79 @@ function getSessionId() {
     sessionStorage.setItem(key, id);
   }
   return id;
+}
+
+function getRememberedStudentId() {
+  return sessionStorage.getItem(STUDENT_ID_KEY) || "";
+}
+
+function setRememberedStudentId(id) {
+  if (!id) return;
+  sessionStorage.setItem(STUDENT_ID_KEY, id.toUpperCase());
+  renderStudentHint();
+}
+
+function clearRememberedStudentId() {
+  sessionStorage.removeItem(STUDENT_ID_KEY);
+  renderStudentHint();
+}
+
+function extractStudentId(text) {
+  const m = String(text || "").match(STUDENT_ID_RE);
+  return m ? m[1].toUpperCase() : "";
+}
+
+function needsStudentContext(text) {
+  const lower = String(text || "").toLowerCase();
+  return (
+    lower.includes("eligible") ||
+    lower.includes("my attendance") ||
+    lower.includes("my result") ||
+    lower.includes("my cgpa") ||
+    lower.includes("student record") ||
+    lower.includes("my marks")
+  );
+}
+
+function withStudentId(message) {
+  const found = extractStudentId(message);
+  if (found) {
+    setRememberedStudentId(found);
+    return message;
+  }
+  const remembered = getRememberedStudentId();
+  if (remembered && needsStudentContext(message)) {
+    return `${message}\n[studentId=${remembered}]`;
+  }
+  return message;
+}
+
+function renderStudentHint() {
+  let hint = document.getElementById("student-id-hint");
+  if (!hint) {
+    hint = document.createElement("div");
+    hint.id = "student-id-hint";
+    hint.className = "student-id-hint";
+    formEl.insertAdjacentElement("beforebegin", hint);
+  }
+  const id = getRememberedStudentId();
+  if (!id) {
+    hint.hidden = true;
+    hint.innerHTML = "";
+    return;
+  }
+  hint.hidden = false;
+  hint.innerHTML = "";
+  const span = document.createElement("span");
+  span.textContent = `Using student ID ${id}`;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "linkish";
+  btn.textContent = "Clear";
+  btn.addEventListener("click", clearRememberedStudentId);
+  hint.appendChild(span);
+  hint.appendChild(document.createTextNode(" · "));
+  hint.appendChild(btn);
 }
 
 function renderChips() {
@@ -188,6 +263,7 @@ function toolLabel(name) {
     get_admission_deadline: "Checked admission deadline",
     get_exam_schedule: "Checked exam schedule",
     create_ticket: "Created support ticket",
+    check_student_record: "Checked student record",
   };
   return map[name] || name;
 }
@@ -201,11 +277,12 @@ function escapeHtml(s) {
 }
 
 async function sendMessage(text) {
-  const message = (text ?? inputEl.value).trim();
-  if (!message) return;
+  const display = (text ?? inputEl.value).trim();
+  if (!display) return;
 
+  const message = withStudentId(display);
   inputEl.value = "";
-  addBubble("user", message);
+  addBubble("user", display);
   const loading = addBubble("system", "Thinking…");
   loading.classList.add("loading");
   sendBtn.disabled = true;
@@ -241,7 +318,8 @@ formEl.addEventListener("submit", (e) => {
 });
 
 renderChips();
+renderStudentHint();
 addBubble(
   "system",
-  "Ask a campus question or tap a suggested prompt to begin."
+  "Ask a campus question or tap a suggested prompt. Demo student IDs: S1-001 … S1-006."
 );
